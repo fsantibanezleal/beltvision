@@ -1,0 +1,53 @@
+name: publish-pypi
+# Build sdist + wheel and publish to PyPI via OIDC Trusted Publishing (no token).
+#
+# Trigger: a published GitHub Release. Cut a release from a `vX.YY.ZZZ` tag on `main`
+# and publishing runs automatically.
+#
+# ONE-TIME HUMAN STEP (per package, do this once before the first release):
+#   On PyPI, add a "pending" Trusted Publisher for this project:
+#     - PyPI project name:   beltvision
+#     - Owner / repository:  fsantibanezleal/beltvision
+#     - Workflow filename:   publish-pypi.yml
+#     - Environment name:    pypi
+#   No API token is created or stored anywhere. The first published release then
+#   uploads with OIDC alone.
+#
+# NOTE: publishing waits until the extracted API stabilizes. While on 0.x, consumers
+# install from a git tag ref (see README) rather than from PyPI. Do not cut a release
+# until the API is stable.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC token for Trusted Publishing; no PyPI token is stored
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Check the built distributions
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+
+      - name: Publish to PyPI (Trusted Publishing, OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
