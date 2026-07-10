@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beltvision"
+version = "0.1.0"
+description = "Reusable computer-vision inspection engine for industrial conveyor belts: CLAHE preprocessing, belt-edge geometry, anomaly, segmentation, granulometry, tracking, plus the staged-pipeline + data-contract + measured live/precompute lane-gate + manifest machinery."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{ name = "Felipe Santibanez-Leal" }]
+keywords = [
+    "computer-vision",
+    "conveyor-belt",
+    "inspection",
+    "anomaly-detection",
+    "segmentation",
+    "granulometry",
+    "tracking",
+    "onnx",
+    "pipeline",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Typing :: Typed",
+]
+
+# Minimal core: the classical stack the engine imports at module load time. Heavy
+# deep-learning engines are optional extras (see [dl]) imported lazily in precompute.
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "scikit-image>=0.22",
+    "scipy>=1.12",
+]
+
+[project.optional-dependencies]
+# The precompute lane: heavy SOTA engines, imported only when training/exporting.
+dl = [
+    "torch>=2.3",
+    "torchvision>=0.18",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "ultralytics>=8.2",
+    "anomalib>=1.1",
+    "transformers>=4.41",
+    "timm>=1.0",
+    "einops>=0.8",
+    "safetensors>=0.4",
+    "huggingface-hub>=0.23",
+    "boxmot>=16.0",
+    "deep-sort-realtime>=1.3",
+    "faiss-cpu>=1.8",
+    "scikit-learn>=1.4",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+beltvision = "beltvision.pipeline:main"
+
+[project.urls]
+Homepage = "https://github.com/fsantibanezleal/beltvision"
+Repository = "https://github.com/fsantibanezleal/beltvision"
+Changelog = "https://github.com/fsantibanezleal/beltvision/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["beltvision*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "A", "N"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["beltvision"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
