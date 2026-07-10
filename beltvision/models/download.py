@@ -57,11 +57,16 @@ WEIGHTS: dict[str, WeightSpec] = {
     "mobile_sam": WeightSpec(
         name="mobile_sam",
         filename="mobile_sam.pt",
-        approx_bytes=40 * _MB,
+        approx_bytes=40728226,
         license="Apache-2.0",
         reference="MobileSAM (Tiny-ViT 5M) https://github.com/ChaoningZhang/MobileSAM",
         url="https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt",
-        notes="Apache-2.0 Tiny-ViT SAM encoder, ~40 MB, CPU-affordable automatic masks.",
+        sha256="6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f",
+        notes=(
+            "Apache-2.0 Tiny-ViT SAM encoder, ~40 MB, CPU-affordable automatic masks. "
+            "URL + sha256 verified via httpx; opt-in fetch (download_weight/ensure_weight "
+            "download=True) enables segmentation.mobile_sam to run for real."
+        ),
     ),
     "detector_onnx": WeightSpec(
         name="detector_onnx",

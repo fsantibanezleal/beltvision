@@ -6,6 +6,37 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.03.000] - 2026-07-10
+
+### Added
+
+- `beltvision.precompute`: the offline PRECOMPUTE lane that trains the belt-specific learned
+  anomaly models on REAL normal frames, exports the conv-AE to ONNX so the weight-gated live
+  method becomes real, fits the PaDiM / PatchCore-lite banks, and produces an honest held-out
+  learned-vs-classical benchmark. Deterministic given the seed, reproducible via
+  `python -m beltvision.precompute --data <dir> --models-out <dir> --bench-out <dir>`.
+  - `dataset.build_split`: leakage-safe split (normal-only training; all foreign-object /
+    anomaly frames test-only, MVTec discipline; a subset of normal frames held out as
+    negatives), with a `assert_leakage_free` guard so no frame is in train and test.
+  - `train.train_conv_ae`: trains the conv-AE (L1 reconstruction) on CLAHE grayscale normal
+    frames and exports it to ONNX (opset 17), with a torch-vs-onnxruntime parity check.
+  - `train.fit_padim` / `fit_patchcore`: PaDiM per-position Gaussian and a PatchCore-lite
+    random coreset over frozen ResNet-18 layer2+layer3 features; compact `.npz` banks.
+  - `benchmark.compute_benchmark`: image-level AUROC + average precision per method
+    (classical residual, padim_lite, conv-AE, PaDiM, PatchCore-lite), plus the robustness
+    axis (AUROC drop under a synthetic dust/haze perturbation) and the cost axis (model
+    bytes + measured CPU ms), written as a machine-readable `benchmark.json` and labeled a
+    small-sample proxy with the exact N per class.
+- `anomaly.conv_ae` now returns REAL anomaly output (status `ok`) when the trained
+  `conv_ae.onnx` is present in the beltvision weights dir; the live method is no longer
+  permanently `weights_absent`.
+- `models.download`: the MobileSAM (Apache-2.0) weight URL is now verified and its sha256 is
+  pinned, so the opt-in httpx fetch enables `segmentation.mobile_sam` to run for real; a
+  genuinely missing weight still degrades gracefully to `weights_absent`.
+- Tests: leakage-safe split checks (always-on, classical) plus a conv-AE ONNX export smoke
+  and a benchmark-compute smoke on a tiny fixture (torch-gated: they skip cleanly on a slim
+  runtime venv without a working torch bridge).
+
 ## [0.02.000] - 2026-07-10
 
 ### Added
