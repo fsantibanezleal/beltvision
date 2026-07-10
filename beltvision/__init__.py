@@ -9,6 +9,11 @@ layer. It provides:
   measured numbers (model bytes, inference milliseconds, trace bytes), never a label.
 - A named six-stage pipeline (preprocess, feature_extraction, train, infer, evaluate,
   export) whose stage signatures are frozen and whose bodies are the rework surface.
+- The LIVE-tier method ladder (``beltvision.methods``): a registry of CLAHE-first,
+  tier-tagged, JSON-safe methods across preprocessing, geometry, granulometry,
+  segmentation, anomaly, detection and tracking. Learned methods degrade gracefully to
+  ``weights_absent`` when an optional weight is missing. ``beltvision.models`` locates
+  and (opt-in) downloads those weights.
 - A case registry, deterministic synthetic scenes, and framework-free ONNX artifact
   descriptors.
 
@@ -19,6 +24,6 @@ precompute lane only, so the import boundary stays clean.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

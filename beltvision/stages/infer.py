@@ -114,9 +114,28 @@ def _patch_anomaly(ctx: StageContext) -> dict[str, Any]:
     )
 
 
+def _run_ladder(ctx: StageContext) -> list[dict[str, Any]]:
+    """Run the LIVE method ladder on the frame and fold each result into a manifest method.
+
+    Each ladder method measures its own gate inputs (bytes, ms, web-drivability) and is
+    classified by ``core.gate``; ``to_manifest_method`` re-runs the gate on those numbers
+    so the manifest lane is measured, never labeled. Learned methods whose optional weight
+    is absent contribute a ``weights_absent`` method result rather than raising.
+    """
+    from ..methods import list_methods, run, to_manifest_method
+
+    folded: list[dict[str, Any]] = []
+    for method_id in list_methods():
+        res = run(method_id, ctx.image_bgr, camera_id=ctx.case_id, tracker_id=ctx.case_id)
+        folded.append(to_manifest_method(res))
+    return folded
+
+
 def infer(ctx: StageContext) -> dict[str, Any]:
     with stage_timer(ctx.trace, "infer") as t:
+        # The stage's built-in demonstration methods, then the full live ladder.
         methods = [_edge_geometry(ctx), _patch_anomaly(ctx)]
+        methods.extend(_run_ladder(ctx))
         ctx.state["methods"] = methods
         summary = {
             "n_methods": len(methods),
