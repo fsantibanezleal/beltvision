@@ -252,27 +252,35 @@ def _sam_regions(bgr: np.ndarray) -> list[np.ndarray] | None:
         return None
 
 
-def _clip_label_regions(
-    bgr: np.ndarray, regions: list[np.ndarray], prior: np.ndarray
-) -> tuple[np.ndarray, str]:
-    """Label each SAM region by CLIP zero-shot (if available) else by the prior's vote."""
-    labels = prior.argmax(axis=-1).astype(np.int32)
-    engine = "open-vocab(MobileSAM+prior-vote)"
+def _add_foreign_regions(
+    bgr: np.ndarray, regions: list[np.ndarray], base_labels: np.ndarray, prior: np.ndarray
+) -> tuple[np.ndarray, str, int]:
+    """Keep the classical belt/content/external map; ADD the open-vocab FOREIGN class.
+
+    The classical prior is reliable for belt / content / external on the hazy belt domain,
+    so it stays the base map. The learned open-vocab path (MobileSAM crisp regions + CLIP
+    zero-shot) is used only for its genuine strength: promoting a region to a FOREIGN object
+    (wood / tool / metal / debris). This is stable - it never swings belt to 0% or 100% the
+    way a full SAM+CLIP relabel does on low-contrast frames.
+    """
+    labels = base_labels.copy()
     clip = _try_clip()
-    if clip is not None:
-        engine = "open-vocab(MobileSAM+CLIP)"
+    engine = "open-vocab(MobileSAM+CLIP foreign) + classical prior" if clip else \
+             "open-vocab(MobileSAM foreign) + classical prior"
     h, w = labels.shape
-    for m in sorted(regions, key=lambda z: int(z.sum())):  # small first, big overwrite
+    used = 0
+    for m in sorted(regions, key=lambda z: int(z.sum())):
         if m.shape != (h, w):
             import cv2
 
             m = cv2.resize(m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
         area = int(m.sum())
-        if area < 0.002 * h * w:
-            continue
-        cls = _classify_region(bgr, m, prior, clip)
-        labels[m] = cls
-    return labels, engine
+        if area < 0.002 * h * w or area > 0.5 * h * w:
+            continue  # ignore tiny specks and huge background regions for foreign
+        used += 1
+        if _classify_region(bgr, m, prior, clip) == FOREIGN:
+            labels[m] = FOREIGN
+    return labels, engine, used
 
 
 _CLIP_CACHE: dict[str, Any] = {}
@@ -303,11 +311,19 @@ def _try_clip():
 
 
 def _classify_region(bgr, mask, prior, clip) -> int:
-    """Return the class id for a SAM region."""
+    """Return the class id for a SAM region.
+
+    The belt / content / external decision comes from the classical prior's per-class vote
+    inside the region - it is reliable across the hazy, low-contrast belt domain where
+    CLIP zero-shot tends to call everything "background/structure". CLIP contributes only
+    its genuine strength: flagging a region as a FOREIGN object (wood / tool / metal /
+    debris) when it is confident. So SAM gives crisp regions, the prior labels belt/content/
+    external, and CLIP adds the open-vocab foreign-object class on top.
+    """
+    votes = prior[mask].mean(axis=0)  # a 4-vector probability over the classes
+    prior_cls = int(np.argmax(votes))
     if clip is None:
-        # prior majority vote within the region
-        votes = prior[mask].mean(axis=0)
-        return int(np.argmax(votes))
+        return prior_cls
     try:
         import torch
         from PIL import Image
@@ -320,16 +336,16 @@ def _classify_region(bgr, mask, prior, clip) -> int:
         with torch.no_grad():
             out = clip["model"](**inp)
         probs = out.logits_per_image.softmax(dim=1).numpy()[0]
-        # aggregate prompt probs per class
-        best_cls, best_p = EXTERNAL, -1.0
-        for cls in (EXTERNAL, BELT, CONTENT, FOREIGN):
-            p = float(probs[clip["index"] == cls].sum())
-            if p > best_p:
-                best_cls, best_p = cls, p
-        return int(best_cls)
+        clip_cls = np.array([float(probs[clip["index"] == c].sum())
+                             for c in (EXTERNAL, BELT, CONTENT, FOREIGN)])
+        clip_cls = clip_cls / (clip_cls.sum() + 1e-9)
+        # CLIP may only PROMOTE a region to foreign, when it is both the CLIP argmax and
+        # clearly confident; belt/content/external stay with the prior.
+        if int(np.argmax(clip_cls)) == FOREIGN and clip_cls[FOREIGN] >= 0.45:
+            return FOREIGN
+        return prior_cls
     except Exception:
-        votes = prior[mask].mean(axis=0)
-        return int(np.argmax(votes))
+        return prior_cls
 
 
 def compute_layers(
@@ -343,14 +359,14 @@ def compute_layers(
     small, _scale = _work_resize(bgr_full)
     prior = _classical_scores(small, view_type)
 
+    # The classical prior is the reliable base map for belt / content / external.
+    labels_small = _clean_labels(prior, view_type)
     engine = "classical-prior"
     n_regions = 0
     regions = _sam_regions(small) if use_learned else None
     if regions:
-        labels_small, engine = _clip_label_regions(small, regions, prior)
-        n_regions = len(regions)
-    else:
-        labels_small = _clean_labels(prior, view_type)
+        # add the open-vocab FOREIGN class on top (its genuine strength); keep the rest.
+        labels_small, engine, n_regions = _add_foreign_regions(small, regions, labels_small, prior)
 
     # tidy + upsample to full resolution
     labels_small = _postprocess(labels_small, view_type)
