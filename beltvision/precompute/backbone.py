@@ -36,18 +36,19 @@ def preprocess_for_backbone(bgr: np.ndarray, input_size: int = 256) -> np.ndarra
 class ResNetPatchFeatures:
     """A frozen ResNet-18 layer2+layer3 patch-feature extractor (deterministic, CPU)."""
 
-    def __init__(self, input_size: int = 256, grid: int = 8) -> None:
+    def __init__(self, input_size: int = 256, grid: int = 8, device: str = "cpu") -> None:
         import torch
         from torchvision.models import ResNet18_Weights, resnet18
 
         self.input_size = int(input_size)
         self.grid = int(grid)
         self._torch = torch
+        self.device = str(device)
         net = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         net.eval()
         for p in net.parameters():
             p.requires_grad_(False)
-        self._net = net
+        self._net = net.to(self.device)
         # feature dim = layer2 (128) + layer3 (256) channels
         self.feature_dim = 128 + 256
 
@@ -76,7 +77,7 @@ class ResNetPatchFeatures:
         out: list[np.ndarray] = []
         for i in range(0, len(arrs), batch_size):
             batch = np.stack(arrs[i : i + batch_size], axis=0)
-            x = torch.from_numpy(batch)
+            x = torch.from_numpy(batch).to(self.device)
             feat = self._forward_features(x).cpu().numpy()  # (b, D, g, g)
             b, d, gh, gw = feat.shape
             feat = feat.reshape(b, d, gh * gw).transpose(0, 2, 1)  # (b, g*g, D)
