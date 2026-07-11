@@ -6,6 +6,49 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.08.000] - 2026-07-11
+
+### Added
+
+- **`beltvision.methods.foundation`** - a REAL beyond-SOTA (open-vocabulary / foundation-model)
+  method tier that runs on the GPU in the offline precompute lane and returns each result as the
+  same uniform overlay-carrying record the classical / sota methods do (maturity `tier =
+  "beyond_sota"`), so a serving product replays the committed overlay with zero live compute.
+  Six genuinely-loading-and-running methods, each with a legible drawn overlay + a scalar metric:
+  - `features.dinov2` - DINOv2 (ViT-B/14, `facebook/dinov2-base`) dense self-supervised patch
+    features, PCA(1-3) -> RGB feature map upsampled to the frame (metric: explained variance).
+  - `anomaly.dinov2_knn` - per-patch kNN cosine distance over the DINOv2 feature grid -> a
+    foundation-feature anomaly heatmap (AnomalyDINO-style, a PatchCore analogue; metric:
+    max nearest-neighbour distance), peak restricted to the belt footprint when available.
+  - `depth.depth_anything_v2` - Depth-Anything-V2-Small monocular relative depth -> colorised
+    belt-surface relief overlay (metric: relative depth range).
+  - `detection.owlv2` - OWLv2 (`google/owlv2-base-patch16-ensemble`) open-vocabulary detection
+    of belt-domain objects (foreign object / wood / metal tool / person) by text prompt -> boxes
+    + labels + scores (metric: n detections).
+  - `segmentation.grounded_sam` - GroundingDINO (`grounding-dino-tiny`) open-vocab boxes ->
+    SAM (`sam-vit-base`) masks, colored + text-labelled (metric: n masks; belt coverage in extra).
+  - `segmentation.sam2` - SAM 2 (`sam2_b.pt`, ultralytics) prompt-free automatic mask generation
+    with a mask-boundary overlay (metric: n masks), a stronger segmenter than the MobileSAM sota
+    entry (both kept).
+
+  Heavy libs (torch / transformers / ultralytics / PIL) are lazily imported inside each function,
+  each loaded model is cached module-wide across the batch, inputs are long-side-capped for VRAM,
+  and everything runs on `device='cuda'`. A model that will not run RAISES so the precompute
+  wrapper records it in `errors` and skips it - never a fabricated or empty-overlay entry.
+- **`precompute_methods(..., include_foundation=True)`** - a new gate that runs the beyond-SOTA
+  block only when `include_foundation` is set AND `device` is a CUDA device, so the slim CPU
+  runtime never loads a foundation model. Each foundation method is guarded like the others (one
+  failure -> `errors`, never abort).
+- **Beyond-SOTA methods in the ladder `REGISTRY`** - the six foundation methods are registered
+  with `tier="beyond_sota"` so `methods_by_tier()["beyond_sota"]`, `method_index()` and `families()`
+  surface them. Their LIVE registry callable degrades to a graceful `weights_absent` on the CPU/VPS
+  runtime (the model is never hosted live; catalogue cases replay the precomputed overlay), so
+  `run_ladder` stays fast and honest. A new `depth` capability joins the ladder.
+
+### Changed
+
+- `pyproject` `[gpu]` extra: added `pillow` (used directly by the foundation preprocessing).
+
 ## [0.07.001] - 2026-07-11
 
 ### Added

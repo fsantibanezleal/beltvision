@@ -27,6 +27,7 @@ from . import (
     beltline,
     detection,
     features,
+    foundation,
     geometry,
     granulometry,
     preprocess,
@@ -45,8 +46,10 @@ from ._common import ENVELOPE_KEYS
 #   - "sota"         modern learned / deep methods that are the current production standard
 #                    (the trained belt segmenter, MobileSAM, PaDiM/Conv-AE anomaly, ONNX
 #                    detector).
-#   - "beyond_sota"  open-vocabulary foundation-model frontier (GroundedSAM open-vocab
-#                    relabelling, DINOv2 / AnomalyDINO) - registered only when present.
+#   - "beyond_sota"  open-vocabulary / foundation-model frontier (DINOv2 dense features +
+#                    kNN anomaly, Depth-Anything-V2, OWLv2 open-vocab detection, GroundedSAM,
+#                    SAM 2). Hosted in the offline precompute (GPU) lane and replayed as
+#                    committed overlays; the LIVE callable degrades to weights_absent on CPU.
 TIERS = ("classical", "sota", "beyond_sota")
 
 
@@ -190,6 +193,35 @@ _SPECS: tuple[MethodSpec, ...] = (
     _spec("features.lbp", "features", "classical", features.lbp,
           "Ojala et al. 2002 (uniform LBP), TPAMI 24(7)",
           "Local Binary Pattern map; metric texture entropy.", family=features.FAM_TEXTURE),
+    # --- beyond-SOTA: the open-vocabulary / foundation-model frontier (precompute / GPU) ---
+    # Registered so the toolbox groups them under the "beyond_sota" maturity tier. They are
+    # hosted only in the offline precompute (device='cuda') lane and REPLAYED as committed
+    # overlays for catalogue cases; the LIVE callables degrade to a graceful weights_absent on
+    # the CPU/VPS runtime (never raise, never download).
+    _spec("features.dinov2", "features", "beyond_sota", foundation.dinov2,
+          "DINOv2, Oquab et al. 2023 (arXiv:2304.07193); facebook/dinov2-base",
+          "DINOv2 dense self-supervised patch features -> PCA(1-3)->RGB feature map [precompute].",
+          family="foundation_feature"),
+    _spec("anomaly.dinov2_knn", "anomaly", "beyond_sota", foundation.dinov2_knn,
+          "AnomalyDINO (Damm et al. 2024) over DINOv2 (Oquab et al. 2023); PatchCore analogue",
+          "DINOv2 patch features + per-patch kNN distance -> foundation anomaly heatmap [precompute].",
+          family="foundation_anomaly"),
+    _spec("depth.depth_anything_v2", "depth", "beyond_sota", foundation.depth_anything_v2,
+          "Depth-Anything-V2, Yang et al. 2024 (arXiv:2406.09414); Depth-Anything-V2-Small-hf",
+          "Monocular relative depth of the belt surface + load from a single frame [precompute].",
+          family="monocular_depth"),
+    _spec("detection.owlv2", "detection", "beyond_sota", foundation.owlv2,
+          "OWLv2, Minderer et al. 2023 (arXiv:2306.09683); google/owlv2-base-patch16-ensemble",
+          "Open-vocabulary detection of foreign objects / people by text prompt [precompute].",
+          family="open_vocab_detection"),
+    _spec("segmentation.grounded_sam", "segmentation", "beyond_sota", foundation.grounded_sam,
+          "Grounding-DINO (Liu 2023, arXiv:2303.05499) + SAM (Kirillov 2023)",
+          "GroundingDINO open-vocab boxes -> SAM masks, labelled by text prompt [precompute].",
+          family="open_vocab_segmentation"),
+    _spec("segmentation.sam2", "segmentation", "beyond_sota", foundation.sam2,
+          "SAM 2, Ravi et al. 2024 (arXiv:2408.00714); ultralytics sam2_b.pt",
+          "SAM 2 prompt-free automatic mask generation (stronger than MobileSAM) [precompute].",
+          family="foundation_segmentation"),
 )
 
 REGISTRY: dict[str, MethodSpec] = {s.method_id: s for s in _SPECS}

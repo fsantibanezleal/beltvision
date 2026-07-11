@@ -387,6 +387,7 @@ def precompute_methods(
     use_learned: bool = True,
     weights_dir: str | Path | None = None,
     include_mobile_sam: bool = True,
+    include_foundation: bool = True,
 ) -> dict[str, Any]:
     """Run the FULL per-method toolbox on one frame and return uniform, overlay-carrying records.
 
@@ -394,6 +395,12 @@ def precompute_methods(
     record is ``{id, capability, tier, family, name, reference, metric_name, metric_value,
     summary, overlay_b64, status, extra}``. Every method is wrapped so one failure is recorded
     (in ``errors``) and skipped, never aborting the batch.
+
+    When ``include_foundation`` is set AND ``device`` is a CUDA device, the beyond-SOTA
+    open-vocabulary / foundation-model tier also runs (DINOv2 dense features + kNN anomaly,
+    Depth-Anything-V2 depth, OWLv2 open-vocab detection, GroundedSAM open-vocab segmentation,
+    SAM 2 automatic masks). Those models are GPU/precompute-only and are lazily imported here;
+    the slim CPU runtime never triggers them.
     """
     bgr = as_bgr(image)
     clahe = apply_clahe_lab(bgr)
@@ -437,6 +444,23 @@ def precompute_methods(
     # MobileSAM automatic masks (best-effort, sota)
     if include_mobile_sam:
         _try("segmentation.mobile_sam", lambda: _mobile_sam(bgr, wd))
+
+    # beyond-SOTA: the open-vocabulary / foundation-model tier (GPU / precompute only). Each
+    # is guarded like the others (one failure -> errors, never abort). Gated behind a CUDA
+    # device so the CPU runtime never loads a foundation model.
+    if include_foundation and str(device).startswith("cuda"):
+        from ..methods import foundation as _fnd
+
+        _try("foundation.dinov2", lambda: _fnd.dinov2_record(bgr, device=device))
+        _try("foundation.depth_anything_v2",
+             lambda: _fnd.depth_anything_record(bgr, device=device))
+        _try("foundation.owlv2", lambda: _fnd.owlv2_record(bgr, device=device))
+        _try("foundation.grounded_sam",
+             lambda: _fnd.grounded_sam_record(bgr, device=device, weights_dir=wd))
+        _try("foundation.sam2",
+             lambda: _fnd.sam2_record(bgr, device=device, weights_dir=wd))
+        _try("foundation.dinov2_knn",
+             lambda: _fnd.dinov2_knn_record(bgr, device=device, footprint=footprint))
 
     return {
         "device": device,
