@@ -159,8 +159,8 @@ def compute_belt_geometry(
     widths = np.asarray(widths, dtype=np.float64)
 
     def _fit_line(vs: list[float]) -> tuple[float, float]:
-        A = np.vstack([uc_a, np.ones_like(uc_a)]).T
-        a, b = np.linalg.lstsq(A, np.asarray(vs, dtype=np.float64), rcond=None)[0]
+        mat = np.vstack([uc_a, np.ones_like(uc_a)]).T
+        a, b = np.linalg.lstsq(mat, np.asarray(vs, dtype=np.float64), rcond=None)[0]
         return float(a), float(b)
 
     ac, bc = _fit_line(v_mid_s)   # straight centreline
