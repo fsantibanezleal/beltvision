@@ -167,6 +167,117 @@ def geometry_overlay(bgr: np.ndarray, geo: dict) -> np.ndarray:
     return img
 
 
+def _angles_panel(img: np.ndarray, lines: list[str]) -> None:
+    """A compact top-right numeric read-out panel (angles / width / confidence)."""
+    import cv2
+
+    if not lines:
+        return
+    sc = _fs(img)
+    line_h = int(24 * sc / 0.5)
+    box_w = int(max(190, 11 * max(len(s) for s in lines) * sc / 0.5))
+    x0 = max(0, img.shape[1] - box_w - 8)
+    box_h = line_h * len(lines) + 12
+    _panel(img, x0, 8, box_w, box_h, alpha=0.6)
+    y = 8 + line_h
+    for s in lines:
+        _text(img, s, (x0 + 8, y), scale=sc)
+        y += line_h
+    _ = cv2
+
+
+def geometry_analysis_overlay(bgr: np.ndarray, geo: dict) -> np.ndarray:
+    """One consolidated STRAIGHT-LINE geometry overlay: corrected centreline + two straight
+    edges + OBB, with Hough / RANSAC-line / Radon axis arrows and a numeric read-out. Always
+    draws the estimate (with a confidence note), never a fabricated curve."""
+    import cv2
+
+    img = bgr.copy()
+    img = cv2.addWeighted(img, 0.6, np.zeros_like(img), 0.4, 0)
+    h, w = img.shape[:2]
+    conf = geo.get("confidence", "low")
+    legend: list[tuple[tuple[int, int, int], str]] = []
+
+    # OBB (faint white box) - the rotating-calipers belt box
+    obb = geo.get("obb")
+    if obb and obb.get("box_points"):
+        cv2.polylines(img, [_poly(obb["box_points"])], True, (200, 200, 200), 1, cv2.LINE_AA)
+        legend.append(((200, 200, 200), f"OBB {obb['angle_deg']:.0f}deg"))
+
+    # RANSAC straight boundary lines (orange), drawn from their fitted endpoints
+    for key, col, lbl in (("ransac_a", (40, 130, 255), "RANSAC edge A"),
+                          ("ransac_b", (40, 170, 255), "RANSAC edge B")):
+        ln = geo.get(key)
+        if ln and ln.get("p0") and ln.get("p1"):
+            cv2.line(img, tuple(_poly(ln["p0"])), tuple(_poly(ln["p1"])), col, 2, cv2.LINE_AA)
+            legend.append((col, f"{lbl} {ln['angle_deg']:.0f}deg"))
+
+    # the corrected STRAIGHT centreline + two straight edges (the primary geometry)
+    if geo.get("edge_a_xy") and geo.get("edge_b_xy"):
+        cv2.polylines(img, [_poly(geo["edge_a_xy"])], False, (60, 200, 60), 2, cv2.LINE_AA)
+        cv2.polylines(img, [_poly(geo["edge_b_xy"])], False, (60, 220, 220), 2, cv2.LINE_AA)
+        legend.append(((60, 200, 60), "belt edge A (straight)"))
+        legend.append(((60, 220, 220), "belt edge B (straight)"))
+    cl = None
+    if geo.get("centreline_xy"):
+        cl = _poly(geo["centreline_xy"])
+        cv2.polylines(img, [cl], False, (230, 200, 40), 3, cv2.LINE_AA)
+        legend.append(((230, 200, 40), "centreline (straight)"))
+
+    # axis-agreement arrows from the frame centre: Radon (blue) and Hough (magenta)
+    cx, cy = w / 2.0, h / 2.0
+    arm = 0.32 * min(h, w)
+
+    def _arrow(angle_deg, color):
+        d = (np.cos(np.radians(angle_deg)), np.sin(np.radians(angle_deg)))
+        p0 = (int(cx - arm * d[0]), int(cy - arm * d[1]))
+        p1 = (int(cx + arm * d[0]), int(cy + arm * d[1]))
+        cv2.arrowedLine(img, p0, p1, color, 2, cv2.LINE_AA, tipLength=0.05)
+
+    radon = geo.get("radon") or {}
+    if radon.get("orientation_deg") is not None:
+        _arrow(radon["orientation_deg"], (235, 120, 40))
+        legend.append(((235, 120, 40), f"Radon {radon['orientation_deg']:.0f}deg"))
+    hough = geo.get("hough") or {}
+    if hough.get("axis_deg") is not None:
+        _arrow(hough["axis_deg"], (200, 60, 200))
+        legend.append(((200, 60, 200), f"Hough {hough['axis_deg']:.0f}deg"))
+
+    # numeric read-out panel (top-right)
+    ori = geo.get("orientation_deg")
+    width = geo.get("belt_width_px")
+    par = geo.get("edge_parallelism_deg")
+    rl = geo.get("ransac_line") or {}
+    panel = [
+        f"axis (PCA)  {ori:.1f}deg" if ori is not None else "axis  n/a",
+        f"width  {width:.0f} px" if width is not None else "width  n/a",
+        f"parallelism  {par:.1f}deg" if par is not None else "parallelism  n/a",
+        ("STRAIGHT" if geo.get("straight") else "CURVED") + f"  (k={geo.get('curvature', 0):.3f})",
+    ]
+    if rl.get("inlier_frac") is not None:
+        panel.append(f"RANSAC inliers  {rl['inlier_frac']*100:.0f}%")
+    if geo.get("misalignment_deg") is not None:
+        panel.append(f"misalign  {geo['misalignment_deg']:+.1f}deg")
+    panel.append(f"confidence  {conf}")
+    _angles_panel(img, panel)
+
+    draw_legend(img, legend)
+    ori_s = f"{ori:.0f}deg ({geo.get('orientation_label', '?')})" if ori is not None else "n/a"
+    shape_s = "straight" if geo.get("straight") else "curved"
+    conf_note = "" if conf == "high" else f" [{conf} confidence]"
+    draw_summary(img, f"Belt geometry: axis {ori_s}, width ~{width:.0f}px, edges {shape_s} + "
+                      f"{par:.1f}deg parallel; Hough {_fmt(hough.get('axis_deg'))}, RANSAC "
+                      f"{_fmt(rl.get('line_a_deg'))}/{_fmt(rl.get('line_b_deg'))}, Radon "
+                      f"{_fmt(radon.get('orientation_deg'))} agree.{conf_note}"
+                 if (ori is not None and width is not None and par is not None)
+                 else f"Belt geometry estimate at {conf} confidence: {geo.get('reason', 'axis '+ori_s)}.")
+    return img
+
+
+def _fmt(v: Any) -> str:
+    return "n/a" if v is None else f"{v:.0f}deg"
+
+
 def damage_overlay(bgr: np.ndarray, dmg: dict, belt_mask: np.ndarray) -> np.ndarray:
     import cv2
 

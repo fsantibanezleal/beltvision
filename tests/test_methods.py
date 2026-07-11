@@ -77,9 +77,14 @@ def test_missing_weight_yields_weights_absent(method_id, synth_image):
 
 
 def test_registry_has_at_least_twelve_live_methods_with_two_learned():
-    live = [m for m in list_methods() if REGISTRY[m].tier in ("classical", "learned", "foundation")]
+    from beltvision.methods import TIERS
+
+    # Every method carries a maturity tier in {classical, sota, beyond_sota}.
+    live = [m for m in list_methods() if REGISTRY[m].tier in TIERS]
+    assert len(live) == len(list_methods()), "every method must carry a valid maturity tier"
     assert len(live) >= 12, f"expected >=12 live-tier methods, got {len(live)}"
-    assert len(learned_methods()) >= 2, "expected >=2 learned-tier methods"
+    # learned/deep methods are the sota (+ beyond_sota) tier.
+    assert len(learned_methods()) >= 2, "expected >=2 learned (sota) methods"
 
 
 def test_all_six_capabilities_plus_preprocess_present():

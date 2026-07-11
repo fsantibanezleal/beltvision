@@ -6,6 +6,49 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.07.000] - 2026-07-11
+
+### Added
+
+- **Classical feature / edge / keypoint / texture toolbox** (`beltvision.methods.features`).
+  A broad bench of textbook classical operators, each implemented for real on
+  opencv / scikit-image / numpy and each returning a visually DISTINCT drawn overlay (base64
+  PNG) plus a single scalar/count metric, a family and a citable reference. CLAHE-first, and
+  where a belt region is relevant they run INSIDE the segmented belt-footprint mask. The 19
+  operators span six families: edge operators (Canny, Sobel, Scharr, Laplacian,
+  Laplacian-of-Gaussian, Prewitt, Roberts-cross, morphological-gradient - metric edge
+  density); lines/boundaries (HoughLinesP with a dominant-angle read, a RANSAC straight-LINE
+  fit of the two belt-mask boundaries via skimage `LineModelND`, Radon orientation);
+  superpixels (SLIC); shape (oriented bounding box via `minAreaRect`, external contours);
+  corners/keypoints (Harris, Shi-Tomasi good-features, ORB); and texture (a Gabor filter bank
+  with a dominant-orientation read, and a Local Binary Pattern map with a texture-entropy
+  metric). `features.run_all(image, mask=None, methods=None)` segments the belt ONCE and runs
+  the whole bench, returning `{"methods": [{id, name, family, tier, reference, metric_name,
+  metric_value, overlay_b64}, ...]}`. Every operator is also individually registered in the
+  method REGISTRY.
+- **Consolidated straight-line geometry analysis** (`geometry.analysis`). One legible overlay
+  that surfaces the corrected STRAIGHT-LINE beltline (a least-squares straight centreline plus
+  two quasi-parallel straight edges - never a reintroduced parabola/curve) with the belt
+  orientation angle, OBB (angle + w/h), belt width (px) and edge parallelism (deg), and
+  cross-checks the belt axis against Hough, a RANSAC boundary-line fit and Radon on the same
+  frame, with a numeric read-out panel + legend. It never withholds under low confidence: it
+  always draws the estimate and labels the confidence.
+- **Maturity-tier tagging + grouping helpers.** Every REGISTRY method now carries a `tier` in
+  `{classical, sota, beyond_sota}` (the front-end grouping axis, distinct from the per-method
+  compute tier and the measured lane): classical = the whole feature/edge bench plus
+  granulometry / optical-flow / Kalman geometry; sota = the trained belt segmenter
+  (`semantic_layers`), the PaDiM / Conv-AE anomaly methods, MobileSAM and the ONNX detector;
+  beyond_sota is reserved for the open-vocab GroundedSAM / DINOv2 / AnomalyDINO frontier
+  (registered when present). New helpers `methods_by_tier()`, `families()` and
+  `method_index()` let a UI group the ladder by tier or family. A per-method `family` axis was
+  added to `MethodSpec`.
+- **Feature-bench + straight-geometry tests** (`tests/test_features.py`): `features.run_all`
+  returns >= 16 methods, each with a real non-empty PNG overlay + a finite metric and a
+  distinct overlay; every feature method is registered, tier-tagged and runs to an `ok`
+  envelope; and the consolidated geometry keeps the centreline STRAIGHT (least-squares
+  curvature < 0.05 on a straight synthetic belt at multiple orientations) while never
+  withholding an estimate.
+
 ## [0.06.000] - 2026-07-11
 
 ### Added
