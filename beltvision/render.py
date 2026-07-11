@@ -252,7 +252,7 @@ def geometry_analysis_overlay(bgr: np.ndarray, geo: dict) -> np.ndarray:
         f"axis (PCA)  {ori:.1f}deg" if ori is not None else "axis  n/a",
         f"width  {width:.0f} px" if width is not None else "width  n/a",
         f"parallelism  {par:.1f}deg" if par is not None else "parallelism  n/a",
-        ("STRAIGHT" if geo.get("straight") else "CURVED") + f"  (k={geo.get('curvature', 0):.3f})",
+        ("STRAIGHT" if geo.get("straight") else "CURVED") + f"  (k={(geo.get('curvature') or 0.0):.3f})",
     ]
     if rl.get("inlier_frac") is not None:
         panel.append(f"RANSAC inliers  {rl['inlier_frac']*100:.0f}%")
@@ -372,6 +372,109 @@ def dust_overlay(bgr: np.ndarray, haze: dict) -> np.ndarray:
                       f"dark-channel {haze.get('dark_channel', 0):.2f}, "
                       f"contrast Lstd {haze.get('global_contrast_lstd', 0):.0f}. "
                       "High haze lowers downstream confidence.")
+    return img
+
+
+def heatmap_overlay(
+    bgr: np.ndarray,
+    score_map: Any,
+    *,
+    legend_label: str,
+    summary: str,
+    title: str = "Anomaly",
+    peak_xy: tuple[int, int] | None = None,
+    colormap: int | None = None,
+    alpha: float = 0.55,
+) -> np.ndarray:
+    """Blend a normalized 2D score map (any resolution) over the frame as a colour heatmap.
+
+    Used by the precompute lane for anomaly methods (PaDiM / PatchCore / conv-AE) whose live
+    result carries a per-patch residual grid but no drawn overlay. The score map is min-max
+    normalized, bicubically upsampled to the frame, colour-mapped and blended; the peak
+    location (if given, in frame pixels) gets a named marker. Legible: legend + result bar.
+    """
+    import cv2
+
+    img = bgr.copy()
+    h, w = img.shape[:2]
+    sm = np.asarray(score_map, dtype=np.float32)
+    if sm.ndim != 2 or sm.size == 0:
+        return message_overlay(bgr, title, summary or "no score map produced")
+    lo, hi = float(np.nanmin(sm)), float(np.nanmax(sm))
+    norm = (sm - lo) / (hi - lo) if (hi - lo) > 1e-9 else np.zeros_like(sm)
+    up = cv2.resize((norm * 255.0).astype(np.uint8), (w, h), interpolation=cv2.INTER_CUBIC)
+    heat = cv2.applyColorMap(up, cv2.COLORMAP_INFERNO if colormap is None else colormap)
+    img = cv2.addWeighted(img, 1.0 - alpha, heat, alpha, 0)
+    legend = [((40, 120, 235), legend_label)]
+    if peak_xy is not None:
+        px, py = int(peak_xy[0]), int(peak_xy[1])
+        cv2.drawMarker(img, (px, py), (60, 255, 255), cv2.MARKER_CROSS, 26, 2, cv2.LINE_AA)
+        cv2.circle(img, (px, py), 16, (60, 255, 255), 2, cv2.LINE_AA)
+        legend.append(((60, 255, 255), "peak anomaly"))
+    draw_legend(img, legend)
+    draw_summary(img, summary)
+    return img
+
+
+def flow_overlay(bgr: np.ndarray, flow: np.ndarray, *, summary: str) -> np.ndarray:
+    """Dense optical-flow overlay: a flow-magnitude heat blend plus a sparse arrow field."""
+    import cv2
+
+    img = bgr.copy()
+    h, w = img.shape[:2]
+    fx, fy = flow[..., 0], flow[..., 1]
+    mag = np.sqrt(fx * fx + fy * fy)
+    m = mag / (float(mag.max()) + 1e-9)
+    heat = cv2.applyColorMap((m * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
+    img = cv2.addWeighted(img, 0.6, heat, 0.4, 0)
+    step = max(16, min(h, w) // 22)
+    for y in range(step // 2, h, step):
+        for x in range(step // 2, w, step):
+            dx, dy = float(fx[y, x]), float(fy[y, x])
+            if dx * dx + dy * dy < 0.25:
+                continue
+            p1 = (int(x + dx * 3.0), int(y + dy * 3.0))
+            cv2.arrowedLine(img, (x, y), p1, (60, 255, 60), 1, cv2.LINE_AA, tipLength=0.35)
+    draw_legend(img, [((0, 180, 255), "flow magnitude"), ((60, 255, 60), "flow vector")])
+    draw_summary(img, summary)
+    return img
+
+
+def granulometry_overlay(
+    bgr: np.ndarray, labels: np.ndarray, *, summary: str
+) -> np.ndarray:
+    """Colour every watershed-segmented particle + draw its boundary; result bar with the PSD."""
+    import cv2
+    from skimage.segmentation import find_boundaries
+
+    img = bgr.copy()
+    color = np.zeros_like(bgr)
+    rng = np.random.default_rng(34)
+    ids = np.unique(labels)
+    for lid in ids:
+        if int(lid) == 0:
+            continue
+        col = tuple(int(c) for c in rng.integers(70, 256, size=3))
+        color[labels == lid] = col
+    img = cv2.addWeighted(img, 0.55, color, 0.45, 0)
+    bnd = find_boundaries(labels, mode="outer")
+    img[bnd] = (255, 255, 255)
+    draw_legend(img, [((0, 120, 235), "segmented particle"), ((255, 255, 255), "particle boundary")])
+    draw_summary(img, summary)
+    return img
+
+
+def masks_overlay(
+    bgr: np.ndarray, boxes: list[tuple[int, int, int, int]], *, summary: str
+) -> np.ndarray:
+    """Draw the bounding boxes of automatically-generated (SAM) masks + a result bar."""
+    import cv2
+
+    img = bgr.copy()
+    for (x, y, w, h) in boxes:
+        cv2.rectangle(img, (int(x), int(y)), (int(x + w), int(y + h)), (0, 200, 255), 2, cv2.LINE_AA)
+    draw_legend(img, [((0, 200, 255), "automatic mask (SAM)")])
+    draw_summary(img, summary)
     return img
 
 

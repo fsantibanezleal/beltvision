@@ -6,6 +6,34 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.07.001] - 2026-07-11
+
+### Added
+
+- **`beltvision.precompute.precompute_methods`** - an offline helper that runs the FULL
+  per-method toolbox on one still frame and returns each method as a uniform, JSON-safe record
+  carrying a drawn overlay (base64 PNG), a scalar metric, and its maturity `tier` + `family`,
+  so a serving product can precompute + replay every analysis with no live gaps. It runs the
+  19-operator classical feature bench (`features.run_all`) + the consolidated geometry read
+  (`geometry.analysis`), the 4-class semantic map, unsupervised anomaly (PaDiM-lite
+  self-reference, the trained conv-AE reconstruction residual, and the PaDiM + PatchCore-lite
+  frozen-backbone banks - each a per-position colour heatmap), watershed granulometry on the
+  segmented content, dense optical flow, and MobileSAM automatic masks. The 4 semantic layers
+  are segmented ONCE and shared; each method is wrapped so one failure is recorded and skipped,
+  never aborting. Torch / onnxruntime / ultralytics are imported lazily; GPU is used for the
+  frozen-backbone banks + MobileSAM when `device='cuda'`.
+- **Reusable overlay renderers** (`beltvision.render`): `heatmap_overlay` (normalize +
+  upsample + colour-map a per-patch anomaly score grid, with a named peak marker),
+  `flow_overlay` (dense optical-flow magnitude heat + a sparse arrow field), `granulometry_overlay`
+  (colour each watershed particle + its boundary) and `masks_overlay` (SAM automatic-mask boxes)
+  - so the anomaly / flow / granulometry / SAM methods, whose live results carry numbers but no
+  drawn overlay, get a legible legend + result-bar overlay in the precompute lane.
+
+### Changed
+
+- `precompute.backbone.ResNetPatchFeatures` accepts a `device` argument and extracts the frozen
+  ResNet-18 patch features on that device (CPU default; `'cuda'` for the precompute lane).
+
 ## [0.07.000] - 2026-07-11
 
 ### Added

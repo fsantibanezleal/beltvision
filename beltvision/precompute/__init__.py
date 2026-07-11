@@ -21,6 +21,7 @@ from typing import Any
 from .backbone import ResNetPatchFeatures
 from .benchmark import _downscale, compute_benchmark
 from .dataset import build_split
+from .methods import precompute_methods
 from .train import (
     fit_padim,
     fit_patchcore,
@@ -29,7 +30,7 @@ from .train import (
     train_conv_ae,
 )
 
-__all__ = ["run_precompute", "build_split", "compute_benchmark"]
+__all__ = ["run_precompute", "build_split", "compute_benchmark", "precompute_methods"]
 
 _CONV_AE_NAME = "conv_ae.onnx"
 _PADIM_NAME = "padim_ironore.npz"
