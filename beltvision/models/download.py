@@ -91,6 +91,30 @@ WEIGHTS: dict[str, WeightSpec] = {
         url=None,
         notes="Trained offline in the precompute lane then exported (ONNX INT8). Absent => weights_absent.",
     ),
+    "belt_segmenter_onnx": WeightSpec(
+        name="belt_segmenter_onnx",
+        filename="belt_segmenter.onnx",
+        approx_bytes=15 * _MB,
+        license="trained-in-precompute (this repo); synthetic exact-GT + MobileSAM weak labels",
+        reference=(
+            "SegFormer-B0 (Xie et al. 2021, NeurIPS 'SegFormer'); nvidia/mit-b0 encoder "
+            "(NVIDIA license, encoder-only transfer); MobileSAM Apache-2.0 weak belt labels. "
+            "Real discharge/end-view training frames: Velenje coal mine (CC BY 3.0), Kieswerk "
+            "Kronau gravel (CC0), aggregate sand discharge (CC BY 2.0), cubes-on-conveyor."
+        ),
+        url=None,
+        notes=(
+            "Trained belt/scene segmenter: 4 classes {external,belt,content,foreign}, 256x256 "
+            "input, opset 17, CPU-affordable via onnxruntime. It is the PRIMARY scene segmenter "
+            "in beltvision.methods.semantic when present; absent => graceful classical-prior "
+            "fallback. Retrained on REAL CC-licensed discharge/end-view frames (the target COLA "
+            "34 domain) weighted heavily over synthetic exact-GT, so it isolates the belt on "
+            "real discharge frames where the colour prior grabbed rocks/mesh. The compact weight "
+            "is committed in the Colia data repo under models/; point BELTVISION_WEIGHTS_DIR at "
+            "that dir (or drop belt_segmenter.onnx into the weights dir) to activate it. No "
+            "public URL (this-repo artifact)."
+        ),
+    ),
 }
 
 
