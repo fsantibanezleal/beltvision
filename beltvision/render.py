@@ -213,12 +213,12 @@ def content_overlay(bgr: np.ndarray, content_mask: np.ndarray, content: dict) ->
     color = np.zeros_like(bgr)
     color[content_mask] = CLASS_COLORS_BGR[2]
     img = cv2.addWeighted(img, 0.6, color, 0.4, 0)
-    draw_legend(img, [(CLASS_COLORS_BGR[2], "mineral / ore")])
+    draw_legend(img, [(CLASS_COLORS_BGR[2], "transported content")])
     g = content.get("granulometry", {})
     extra = ""
     if g.get("n_particles", 0) > 0:
         extra = f" PSD D50 {g['D50']:.0f} {g['unit']}, {g['n_particles']} fragments."
-    draw_summary(img, f"Mineral content: {content['coverage_pct']:.0f}% of belt covered "
+    draw_summary(img, f"Content: {content['coverage_pct']:.0f}% of belt covered "
                       f"({content['load_label']} load).{extra}")
     return img
 
