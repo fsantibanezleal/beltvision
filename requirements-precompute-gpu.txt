@@ -11,10 +11,11 @@
 # Resolved for CUDA 12.1 (e.g. an RTX 5000 Ada, compute capability 8.9). Create the venv,
 # then:  pip install -r requirements-precompute-gpu.txt
 #
---extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.3.1+cu121
-torchvision==0.18.1+cu121
-onnxruntime-gpu==1.18.1
+# CUDA 12.4 build - verified on RTX 5000 Ada (sm_89), driver CUDA 12.8, torch.cuda OK.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
+onnxruntime-gpu
 
 # Heavy model stack (open-vocabulary segmentation, detection, anomaly, tracking)
 ultralytics==8.2.50            # SAM / MobileSAM, RT-DETR export, YOLO
