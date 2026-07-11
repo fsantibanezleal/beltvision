@@ -24,6 +24,26 @@ precompute lane only, so the import boundary stays clean.
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
-__all__ = ["__version__"]
+
+def __getattr__(name: str):  # lazy re-exports (keep import boundary slim)
+    if name in ("recognize_view", "VIEW_TYPES", "VIEW_ANALYSES", "analyses_for_view"):
+        from . import views
+
+        return getattr(views, name)
+    if name == "analyze_scene":
+        from .analysis import analyze_scene
+
+        return analyze_scene
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "__version__",
+    "recognize_view",
+    "analyze_scene",
+    "VIEW_TYPES",
+    "VIEW_ANALYSES",
+    "analyses_for_view",
+]

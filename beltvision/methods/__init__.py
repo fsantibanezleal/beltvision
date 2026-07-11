@@ -22,7 +22,17 @@ import numpy as np
 
 from ..core.gate import classify_lane
 from ..core.manifest import build_method_result
-from . import anomaly, detection, geometry, granulometry, preprocess, segmentation, tracking
+from . import (
+    anomaly,
+    beltline,
+    detection,
+    geometry,
+    granulometry,
+    preprocess,
+    segmentation,
+    semantic,
+    tracking,
+)
 from ._common import ENVELOPE_KEYS
 
 
@@ -48,13 +58,12 @@ _SPECS: tuple[MethodSpec, ...] = (
           "CLAHE LAB-L clip2.0/8x8 + bilateral + dark-channel haze",
           "Mandatory first stage: dust-robust CLAHE + denoise + haze severity."),
     _spec("geometry.hough_edges", "geometry", "classical", geometry.hough_edges,
-          "Canny 1986; OpenCV HoughLinesP", "Near-vertical straight-line edge candidates."),
-    _spec("geometry.ransac_edges", "geometry", "classical", geometry.ransac_edges,
-          "Fischler & Bolles 1981 (RANSAC)", "Robust deg-2 polynomial left/right edge fit."),
+          "Canny 1986; OpenCV HoughLinesP", "Straight-line edge candidates."),
+    _spec("geometry.belt_geometry", "geometry", "classical", beltline.belt_geometry,
+          "Principal-axis + medial line from the segmented belt mask; Hough support axis",
+          "Orientation-agnostic belt axis, centreline, edges, width and alignment from the mask."),
     _spec("geometry.radon_orientation", "geometry", "classical", geometry.radon_orientation,
           "Radon transform; skimage.radon", "Noise-robust dominant belt orientation."),
-    _spec("geometry.misalignment", "geometry", "classical", geometry.misalignment,
-          "Derived from RANSAC edges", "Centreline deviation, width profile, skew, flags."),
     _spec("geometry.kalman_edge", "geometry", "classical", geometry.kalman_edge,
           "Kalman 1960", "Per-camera constant-velocity edge smoothing (wander trend)."),
     _spec("geometry.obb", "geometry", "classical", geometry.obb,
@@ -62,6 +71,9 @@ _SPECS: tuple[MethodSpec, ...] = (
     _spec("granulometry.watershed_psd", "granulometry", "classical", granulometry.watershed_psd,
           "Watershed granulometry; Rosin-Rammler ISO 9276-1",
           "Watershed PSD -> D10/D50/D80, oversize%, Rosin-Rammler fit."),
+    _spec("segmentation.semantic_layers", "segmentation", "learned", semantic.semantic_layers,
+          "SAM/MobileSAM (Apache-2.0) + CLIP open-vocab; classical colour/texture prior fallback",
+          "4-class semantic backbone: belt / content / foreign / external (never weights_absent)."),
     _spec("segmentation.slic", "segmentation", "classical", segmentation.slic,
           "Achanta et al. 2012 (SLIC), TPAMI 34(11)", "SLIC superpixel over-segmentation."),
     _spec("segmentation.mobile_sam", "segmentation", "learned", segmentation.mobile_sam,

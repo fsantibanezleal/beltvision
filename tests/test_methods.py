@@ -106,12 +106,18 @@ def test_hough_edges_split_left_right(synth_image):
     assert isinstance(r["n_candidates"], int)
 
 
-def test_ransac_edges_fits_polynomials(synth_image):
-    r = run("geometry.ransac_edges", synth_image)
-    assert r["degree"] == 2
-    assert r["n_edge_points"] > 0
-    if r["left_edge"]:
-        assert len(r["left_edge"]["coeffs"]) == 3  # deg-2 -> 3 coefficients
+def test_belt_geometry_is_mask_derived_no_polynomial(synth_image):
+    # The only edge model is the belt-mask shape (medial axis); there is NO polynomial fit.
+    r = run("geometry.belt_geometry", synth_image)
+    assert "axis_angle_deg" in r or r["confidence"] == "low"
+    assert "coeffs" not in r  # no parametric curve coefficients anywhere
+    assert r["confidence"] in ("low", "medium", "high")
+
+
+def test_ransac_and_misalignment_methods_removed():
+    # The degree-2 polynomial edge fit and the axis-assuming misalignment are gone.
+    assert "geometry.ransac_edges" not in list_methods()
+    assert "geometry.misalignment" not in list_methods()
 
 
 def test_radon_orientation_in_range(synth_image):
@@ -120,20 +126,10 @@ def test_radon_orientation_in_range(synth_image):
     assert r["orientation_strength"] > 0
 
 
-def test_misalignment_honest_when_uncalibrated(synth_image):
-    r = run("geometry.misalignment", synth_image)
-    if r["both_edges_found"]:
-        assert "centreline_deviation_px" in r
-        # No px_per_mm: report relative px and never fabricate a millimetre figure.
-        assert r["calibration"].startswith("relative")
-        assert "centreline_deviation_mm" not in r
-
-
-def test_misalignment_mm_when_calibrated(synth_image):
-    r = run("geometry.misalignment", synth_image, px_per_mm=4.0)
-    if r["both_edges_found"]:
-        assert r["calibration"] == "absolute-mm"
-        assert "centreline_deviation_mm" in r
+def test_semantic_layers_four_classes_never_weights_absent(synth_image):
+    r = run("segmentation.semantic_layers", synth_image)
+    assert r["status"] == "ok"  # backbone degrades to the classical prior, never weights_absent
+    assert set(r["coverage"]) == {"external", "belt", "content", "foreign"}
 
 
 def test_kalman_persists_across_calls(synth_image):

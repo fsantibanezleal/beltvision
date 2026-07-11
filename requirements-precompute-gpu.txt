@@ -1,0 +1,33 @@
+# beltvision LOCAL PRECOMPUTE / TRAINING lane -- CUDA GPU (NOT the VPS runtime).
+#
+# Per ADR-0014 the environment is split in two:
+#   * CPU .venv  = VPS emulation (CPU torch + onnxruntime): the deployed runtime and the
+#     live-thin tier are validated there. See pyproject [dl] for that lane.
+#   * GPU venv   = this file: local training + offline precompute of the catalogue on the
+#     GPU (device='cuda'). The VPS never installs these; precompute is local and exploits
+#     the GPU to run the best/heaviest models (open-vocab semantic seg, detection,
+#     PatchCore/EfficientAD, conv-AE training, the per-video temporal pass).
+#
+# Resolved for CUDA 12.1 (e.g. an RTX 5000 Ada, compute capability 8.9). Create the venv,
+# then:  pip install -r requirements-precompute-gpu.txt
+#
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.3.1+cu121
+torchvision==0.18.1+cu121
+onnxruntime-gpu==1.18.1
+
+# Heavy model stack (open-vocabulary segmentation, detection, anomaly, tracking)
+ultralytics==8.2.50            # SAM / MobileSAM, RT-DETR export, YOLO
+transformers==4.41.2           # CLIP, Grounding-DINO (zero-shot), backbones
+timm==1.0.7
+safetensors==0.4.3
+huggingface-hub==0.36.2
+groundingdino-py==0.4.0        # open-vocabulary detection prompts -> boxes
+segment-anything==1.0          # full SAM (ViT-H/L) when GPU memory allows
+anomalib==1.1.0                # PatchCore / EfficientAD training
+faiss-cpu==1.8.0               # PatchCore memory bank (index build)
+scikit-learn==1.5.0
+einops==0.8.0
+supervision==0.6.0
+httpx==0.28.1                  # weight + dataset fetch (never curl)
+opencv-python==4.11.0.86
