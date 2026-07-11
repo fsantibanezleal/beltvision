@@ -135,43 +135,52 @@ def compute_belt_geometry(
     u_min, u_max = np.percentile(u, 1), np.percentile(u, 99)
     edges_u = np.linspace(u_min, u_max, _N_BINS + 1)
     centres_u = 0.5 * (edges_u[:-1] + edges_u[1:])
-    cl, ea, eb, widths = [], [], [], []
+    uc, v_mid_s, v_top_s, v_bot_s, widths = [], [], [], [], []
     for i in range(_N_BINS):
         sel = (u >= edges_u[i]) & (u < edges_u[i + 1])
         if sel.sum() < 8:
             continue
         v_sel = v[sel]
-        v_mid = float(np.median(v_sel))
-        half = float((np.percentile(v_sel, 97) - np.percentile(v_sel, 3)) / 2.0)
-        base = mean + centres_u[i] * major
-        c = base + v_mid * minor
-        cl.append(c)
-        ea.append(base + (v_mid + half) * minor)
-        eb.append(base + (v_mid - half) * minor)
-        widths.append(2.0 * half)
-    if len(cl) < 4:
+        v_top = float(np.percentile(v_sel, 97))
+        v_bot = float(np.percentile(v_sel, 3))
+        uc.append(float(centres_u[i]))
+        v_mid_s.append(float(np.median(v_sel)))
+        v_top_s.append(v_top)
+        v_bot_s.append(v_bot)
+        widths.append(v_top - v_bot)
+    if len(uc) < 4:
         return {"confidence": "low", "reason": "too few cross-sections for a centreline",
                 "belt_area_frac": round(area_frac, 4)}
 
-    cl = np.array(cl)
-    ea = np.array(ea)
-    eb = np.array(eb)
-    widths = np.array(widths)
+    # A belt is TWO quasi-parallel STRAIGHT lines; the centreline is a STRAIGHT line (their
+    # midline). Fit v = a*u + b (degree 1, least squares) for the centreline and each edge -
+    # NEVER a free per-cross-section curve, never a polynomial/parabola.
+    uc_a = np.asarray(uc, dtype=np.float64)
+    widths = np.asarray(widths, dtype=np.float64)
 
-    # curvature: how far the centreline bows from its straight chord, normalized by length
-    # (NO polynomial fit anywhere - just the max perpendicular deviation from the chord).
-    chord = cl[-1] - cl[0]
-    clen = float(np.hypot(chord[0], chord[1])) + 1e-6
-    chord_u = chord / clen
-    rel = cl - cl[0]
-    perp = np.abs(rel[:, 0] * (-chord_u[1]) + rel[:, 1] * chord_u[0])
-    curvature = float(perp.max() / clen)
-    curved = bool(curvature > 0.06)
+    def _fit_line(vs: list[float]) -> tuple[float, float]:
+        A = np.vstack([uc_a, np.ones_like(uc_a)]).T
+        a, b = np.linalg.lstsq(A, np.asarray(vs, dtype=np.float64), rcond=None)[0]
+        return float(a), float(b)
 
-    # local tangent angle along the centreline (deg from x-axis)
-    d = np.gradient(cl, axis=0)
-    tangents = (np.degrees(np.arctan2(d[:, 1], d[:, 0])) % 180.0)
-    skew = float(np.percentile(tangents, 90) - np.percentile(tangents, 10))
+    ac, bc = _fit_line(v_mid_s)   # straight centreline
+    at, bt = _fit_line(v_top_s)   # straight top edge
+    ab, bb = _fit_line(v_bot_s)   # straight bottom edge
+    u_ends = np.array([u_min, u_max], dtype=np.float64)
+
+    def _line_xy(a: float, b: float) -> np.ndarray:
+        return np.array([mean + u_ends[k] * major + (a * u_ends[k] + b) * minor
+                         for k in range(2)], dtype=np.float64)
+    cl = _line_xy(ac, bc)   # 2-point STRAIGHT centreline
+    ea = _line_xy(at, bt)   # 2-point STRAIGHT top edge
+    eb = _line_xy(ab, bb)   # 2-point STRAIGHT bottom edge
+
+    # residual of the straight centreline fit = how non-straight the real belt is (small=straight)
+    span = float(u_max - u_min) + 1e-6
+    curvature = float(np.max(np.abs(np.asarray(v_mid_s) - (ac * uc_a + bc))) / span)
+    curved = bool(curvature > 0.04)
+    # parallelism: difference in the two edge slopes (0 deg => perfectly parallel lines)
+    skew = float(abs(np.degrees(np.arctan(at)) - np.degrees(np.arctan(ab))))
 
     dev_from_vertical = float(min(abs(angle - 90.0), 180.0 - abs(angle - 90.0)))
     out: dict[str, Any] = {
