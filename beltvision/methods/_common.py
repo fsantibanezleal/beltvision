@@ -43,6 +43,7 @@ ENVELOPE_KEYS = frozenset(
         "gate",
         "reference",
         "notes",
+        "overlay_b64",
     }
 )
 
