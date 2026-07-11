@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beltvision"
-version = "0.8.0"
+version = "0.9.0"
 description = "Reusable computer-vision inspection engine for industrial conveyor belts: CLAHE preprocessing, belt-edge geometry, anomaly, segmentation, granulometry, tracking, plus the staged-pipeline + data-contract + measured live/precompute lane-gate + manifest machinery."
 readme = "README.md"
 license = "Apache-2.0"
@@ -40,6 +40,7 @@ dependencies = [
     "opencv-python-headless>=4.9",
     "scikit-image>=0.22",
     "scipy>=1.12",
+    "PyWavelets>=1.5",
 ]
 
 [project.optional-dependencies]

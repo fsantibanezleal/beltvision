@@ -25,6 +25,7 @@ from ..core.manifest import build_method_result
 from . import (
     anomaly,
     beltline,
+    constrained,
     detection,
     features,
     foundation,
@@ -34,6 +35,7 @@ from . import (
     segmentation,
     semantic,
     tracking,
+    transforms,
 )
 from ._common import ENVELOPE_KEYS
 
@@ -169,6 +171,22 @@ _SPECS: tuple[MethodSpec, ...] = (
     _spec("features.radon_orientation", "features", "classical", features.radon_orientation,
           "Radon transform (skimage.transform.radon)",
           "Radon dominant orientation (angle + strength).", family=features.FAM_LINES),
+    # --- constrained line detectors (THE fix): detect on the preprocessed, ROI-masked,
+    #     orientation-banded edge map, never the raw frame ---
+    _spec("geometry.hough_constrained", "geometry", "classical",
+          constrained.hough_constrained_method,
+          "skimage hough_line with a band-limited theta vector + gradient-orientation gate "
+          "(arXiv:1510.04863); Matas et al. 2000",
+          "Constrained Hough: straight lines from the ROI edge map within the belt "
+          "orientation band only (no perpendicular noise lines).",
+          family=constrained.FAM_CONSTRAINED),
+    _spec("geometry.ransac_line_constrained", "geometry", "classical",
+          constrained.ransac_line_constrained_method,
+          "Fischler & Bolles 1981 (RANSAC); skimage LineModelND with an orientation-band "
+          "is_model_valid reject",
+          "Constrained RANSAC: straight lines over ROI edge points, rejecting any model "
+          "outside the belt orientation band.",
+          family=constrained.FAM_CONSTRAINED),
     _spec("features.slic", "features", "classical", features.slic_superpixels,
           "Achanta et al. 2012 (SLIC), TPAMI 34(11)",
           "SLIC superpixels; metric #superpixels.", family=features.FAM_SUPERPIXEL),
@@ -193,6 +211,35 @@ _SPECS: tuple[MethodSpec, ...] = (
     _spec("features.lbp", "features", "classical", features.lbp,
           "Ojala et al. 2002 (uniform LBP), TPAMI 24(7)",
           "Local Binary Pattern map; metric texture entropy.", family=features.FAM_TEXTURE),
+    # --- classical transforms (frequency + wavelet), standalone overlays + pipeline nodes ---
+    _spec("transform.fft_spectrum", "transform", "classical", transforms.fft_spectrum,
+          "Fourier power spectrum (fabric-defect FFT+Gabor, medcraveonline JTEFT)",
+          "Log-magnitude FFT power spectrum: the texture's orientation/period fingerprint.",
+          family=transforms.FAM_FREQ),
+    _spec("transform.fft_orientation", "transform", "classical", transforms.fft_orientation,
+          "Fourier spectral-peak orientation/period (periodic-texture analysis)",
+          "Dominant spectral peak -> texture orientation + spatial period.",
+          family=transforms.FAM_FREQ),
+    _spec("transform.fft_filter", "transform", "classical", transforms.fft_filter,
+          "Directional/band/low/high/notch frequency filtering + inverse FFT (fabric defect)",
+          "Frequency-domain filter + reconstruction: remove the regular texture, keep anomalies.",
+          family=transforms.FAM_FREQ),
+    _spec("transform.phot", "transform", "classical", transforms.phot,
+          "Phase-Only Transform; Aiger & Talbot (perso.esiee.fr/~aigerd/phot.pdf)",
+          "Phase-only reconstruction -> unsupervised surface-defect anomaly map.",
+          family=transforms.FAM_FREQ),
+    _spec("transform.dwt_decompose", "transform", "classical", transforms.dwt_decompose,
+          "Multilevel DWT (PyWavelets); wavelet surface inspection (Pattern Recognition)",
+          "Multilevel wavelet decomposition as a subband montage.",
+          family=transforms.FAM_WAVELET),
+    _spec("transform.dwt_reconstruct", "transform", "classical", transforms.dwt_reconstruct,
+          "Wavelet subband reconstruction for defect enhancement (MDPI Materials 2024 17/23/5873)",
+          "Keep selected subbands -> remove repetitive texture, enhance local anomalies.",
+          family=transforms.FAM_WAVELET),
+    _spec("transform.wavelet_denoise", "transform", "classical", transforms.wavelet_denoise,
+          "Translation-invariant BayesShrink wavelet shrinkage (skimage denoise_wavelet)",
+          "Translation-invariant wavelet denoise (edge-preserving).",
+          family=transforms.FAM_WAVELET),
     # --- beyond-SOTA: the open-vocabulary / foundation-model frontier (precompute / GPU) ---
     # Registered so the toolbox groups them under the "beyond_sota" maturity tier. They are
     # hosted only in the offline precompute (device='cuda') lane and REPLAYED as committed

@@ -6,6 +6,62 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.09.000] - 2026-07-11
+
+### Added
+
+- **Guided classical-CV engine (Phase 1): detectors now run on a preprocessed, thresholded,
+  ROI-masked, orientation-constrained input, never the raw frame.** This fixes the defect
+  where firing Hough / RANSAC on the raw frame locked onto noise and "found lines in all
+  directions". New modules:
+  - **`beltvision.methods.roi`** - rasterises user annotations
+    (`freehand` / `polygon` / `rect` / `line` + `label`) to boolean masks at frame
+    resolution (`rasterize`, `combine_by_label`), derives the belt-band prior
+    (`belt_limit_prior` -> band mask + guide orientation + two guide edge lines from an
+    `expected-belt-limits` / `belt-section` region or two guide lines), and returns the
+    orientation gate a constrained detector consumes (`orientation_band(view, annotations)`
+    -> `(theta_center_deg, theta_band_deg)`: top/end near the annotated/detected axis,
+    lateral near-horizontal, PCA/Radon fallback).
+  - **`beltvision.methods.constrained`** - the fix itself:
+    `preprocess_for_lines` (gray -> CLAHE -> gaussian/median/bilateral denoise ->
+    canny/log/sobel edge -> restrict to ROI), `gradient_orientation_gate` (keep only edge
+    pixels whose Sobel gradient orientation is within the belt-normal band),
+    `hough_constrained` (skimage `hough_line` with a THETA VECTOR limited to the band ->
+    `hough_line_peaks` -> straight in-band segments only; a line outside the band is
+    un-representable in the accumulator), and `ransac_line_constrained` (RANSAC over ROI
+    edge points with an orientation-band `is_model_valid` reject -> straight in-band lines
+    only, no cross-direction junk). Each returns the uniform overlay-carrying method record.
+    Registered in the ladder `REGISTRY` as `geometry.hough_constrained` /
+    `geometry.ransac_line_constrained` (family `constrained_lines`).
+  - **`beltvision.methods.transforms`** - classical transforms as records + reusable
+    array helpers: FFT (`fft_spectrum`, `fft_orientation`, `fft_filter`
+    directional/band/low/high/notch + inverse, `phot` phase-only anomaly map, numpy.fft,
+    no new dep) and wavelet (`dwt_decompose`, `dwt_reconstruct` subband selection for
+    texture removal / anomaly enhancement, `wavelet_denoise` translation-invariant
+    BayesShrink). Registered under a new `transform` capability with families
+    `frequency_transform` / `wavelet`.
+  - **`beltvision.methods.measure`** - pure, exact-number measurement (ImageJ Analyze
+    model): `angle_between`, `segment_length`, `polygon_area`, `polygon_perimeter`,
+    `count_objects`, `density`, `calibrate_scale` (px-per-mm) and px<->mm / px2<->mm2
+    converters.
+  - **`beltvision.pipeline_graph`** - the Pipeline Studio node DAG engine. `OP_REGISTRY`
+    (34 ops across source/roi, preprocess, transform, binarize/morphology, detect, measure)
+    reuses the real method implementations. `run_pipeline(spec, image, rois, priors)`
+    executes the graph topologically, threads each node's output image to its consumers and
+    captures EVERY node's overlay + metrics; one node failing is recorded in `errors` and
+    never aborts. Three correctly-staged `TEMPLATES` (`belt_detection`, `belt_condition`,
+    `material_on_belt`) with `list_templates()` / `get_template()` / `op_catalog()`.
+- **`PyWavelets` (`pywt`) added to the beltvision CORE dependencies** - it is a light CPU
+  RUNTIME op (DWT), so it belongs in core, not the `[gpu]` extra.
+- **Tests** (`test_roi`, `test_constrained`, `test_transforms`, `test_measure`,
+  `test_pipeline_graph`): ROI rasterisation exactness; the constrained Hough returns in-band
+  lines ONLY on a synthetic cross-hatch while a raw full-theta Hough returns out-of-band
+  lines; exact measurement numbers; every transform yields a real PNG overlay + finite
+  metric; and every pipeline template runs end-to-end returning per-node overlays. Proven on
+  the real COLA 34 frame: the constrained Hough finds 6 clean near-vertical belt lines (mean
+  axis 91deg, all in-band) where the raw `features.hough_lines_p` finds 453 scattered noise
+  lines (dominant axis 1.7deg).
+
 ## [0.08.000] - 2026-07-11
 
 ### Added
