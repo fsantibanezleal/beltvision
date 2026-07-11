@@ -6,6 +6,34 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.06.000] - 2026-07-11
+
+### Added
+
+- **Temporal / dynamic sequence-video engine** (`beltvision.precompute.dynamic`). Given an
+  ordered frame sequence (or frames sampled from a video), `analyze_sequence(...)` runs the
+  per-frame ladder (CLAHE -> semantic segmentation -> belt geometry -> content coverage) PLUS
+  the genuinely temporal analyses that only exist across frames: dense Farneback optical flow
+  for a per-frame belt SPEED + material-flow direction; a ByteTrack-style associator over
+  per-frame contrast-blob boxes for object/particle TRACKING with stable ids; belt-footprint
+  centroid DRIFT (a lateral wander trend vs a baseline) plus belt-axis angle over time;
+  content COVERAGE over time; and an EVENT stream (object appear/disappear, foreign
+  appear/clear, belt stop/start). Deterministic given the seed; the classical ops and the
+  association carry no randomness.
+- **Annotated output video + metric timelines.** `precompute_sequence(...)` renders one
+  legible overlay per frame (belt edges/centreline or footprint, tracked fragments with ids,
+  a belt-flow arrow and a live metrics HUD) and encodes them to a compact H.264 `annotated.mp4`
+  via `imageio` + `imageio-ffmpeg` (bundled ffmpeg - no system install, no network). It writes
+  `timelines.json` (`belt_speed[t]`, `flow_direction[t]`, `coverage[t]`, `drift[t]`,
+  `track_count[t]`, `n_foreign[t]`, `haze[t]`, `moving[t]`, `events[t]`) and a `manifest.json`
+  (engine/seed/device, frame size, fps/hold/duration, video bytes/codec, the temporal-method
+  list and a metrics summary). The slim runtime never imports this module - it replays the
+  committed mp4 + timelines; `imageio` is imported lazily only inside `encode_video`.
+- **Temporal-smoke tests** (`tests/test_dynamic.py`): a tiny synthetic sliding-window
+  sequence exercises the per-frame ladder + optical-flow speed recovery + blob tracking +
+  drift + events deterministically (always-on, classical only), and an `importorskip`-gated
+  test proves the mp4 encode/decode round-trip in the precompute lane.
+
 ## [0.04.000] - 2026-07-10
 
 ### Added
