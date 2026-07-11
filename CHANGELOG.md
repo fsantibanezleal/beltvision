@@ -6,6 +6,53 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.04.000] - 2026-07-10
+
+### Added
+
+- **View-aware 3-stage pipeline.** `beltvision.recognize_view(image)` (Stage 1) is a
+  classical scene classifier that predicts the `view_type` (`end_return`, `top_carrying`,
+  `side_profile`, `oblique_cctv`) from colour-agnostic scene features (centre isotropic
+  material fill vs oriented belt-streak coherence, dust/haze, orientation) with a
+  confidence and per-view scores. `beltvision.views.VIEW_ANALYSES` (Stage 2) maps a view to
+  the analyses that inform it. `beltvision.analyze_scene(...)` (Stage 3) orchestrates the
+  whole tool on a frame and returns results grouped BY ANALYSIS, each with a legible overlay
+  (base64 PNG), a plain-language summary and JSON metrics.
+- **4-class semantic segmentation backbone** (`segmentation.semantic_layers`): every pixel
+  is labelled `belt` / `content` / `foreign` / `external` (content = the transported
+  material of ANY domain: ore, aggregate, food, packages, recycling...). An always-on
+  classical colour+texture+coherence prior (live-thin, CPU) plus an opt-in open-vocab path
+  (MobileSAM automatic masks labelled by CLIP zero-shot, offline/precompute). Never
+  `weights_absent` - it degrades to the classical prior and reports the engine used. All
+  downstream analyses derive from these layers.
+- **Orientation-agnostic belt geometry from the mask** (`geometry.belt_geometry`): the belt
+  axis comes from the belt-mask structure orientation (works at any orientation - vertical,
+  horizontal, diagonal), the centreline is the medial line of the band (straight or curved,
+  no forced parametric model), edges follow the mask boundary, width is measured
+  perpendicular to the local tangent, and misalignment is the angular difference between the
+  belt axis and the supporting-structure axis (detected from the external layer). Degrades
+  to an honest low-confidence result on a broad/ambiguous region instead of drawing garbage.
+- **Derived analyses** (`beltvision.methods.analyses`): belt damage/integrity (rips/holes/
+  wear inside the belt), edge/border condition, surface irregularity + dust/haze, content
+  quantity (coverage %, load, granulometry PSD INSIDE the content mask only) and foreign
+  objects. Interpretable overlays (`beltvision.render`) with a legend + one-line result.
+- **Labelled synthetic ground truth** (`cases.synthetic.synth_scene` / `GT_SUITE`): scenes
+  at multiple orientations (vertical, horizontal, 30/45deg diagonal) plus a curved path and
+  a misaligned lateral case, each emitting the exact belt mask, centreline, edges,
+  orientation, injected damage/foreign boxes and belt-vs-support angle. A BLOCKING gate
+  (`tests/test_scene_gt.py`) asserts the pipeline recovers this within tolerance (belt IoU,
+  orientation error <= 8deg at every orientation, centreline RMSE, misalignment sign+angle).
+- `requirements-precompute-gpu.txt` + a `[gpu]` extra: the local CUDA precompute/training
+  lane (device='cuda'), separate from the CPU VPS-emulation runtime.
+
+### Changed
+
+- **Removed the degree-2 polynomial ("parabola") edge fit and the axis-assuming
+  misalignment method** (`geometry.ransac_edges`, `geometry.misalignment`). A belt edge is
+  never modelled as a forced curve; all belt geometry is derived from the segmented mask
+  shape. No `np.polyfit(deg>=2)` remains in the geometry path.
+- Bumped to 0.4.0.
+
 ## [0.03.000] - 2026-07-10
 
 ### Added

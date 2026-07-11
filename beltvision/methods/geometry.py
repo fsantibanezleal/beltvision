@@ -1,19 +1,22 @@
-"""Capability 1 + 6: belt-structure geometry and misalignment metrics (all classical, LIVE).
+"""Capability 1: low-level belt-structure geometry primitives (all classical, LIVE).
 
-Six methods, each CLAHE-first:
-- ``geometry.hough_edges``   - Canny + HoughLinesP near-vertical edge candidates (M1).
-- ``geometry.ransac_edges``  - RANSAC deg-2 polynomial left/right edge fit (M2).
+Straight-line and orientation primitives only. There is NO forced parametric edge model
+here: the belt EDGES / CENTRELINE / ALIGNMENT are derived from the segmented belt-mask
+shape in :mod:`beltvision.methods.beltline` (mask boundary + medial axis), which works at
+any orientation and any shape. The old degree-2 polynomial ("parabola") edge fit and the
+axis-assuming misalignment method have been removed - a belt edge is never modelled as a
+forced curve here.
+
+- ``geometry.hough_edges``       - Canny + HoughLinesP straight-line edge candidates (M1).
 - ``geometry.radon_orientation`` - Radon dominant belt orientation (M3).
-- ``geometry.misalignment``  - centreline deviation, width profile, skew, flags (M26).
-- ``geometry.kalman_edge``   - per-camera constant-velocity Kalman edge tracker (M27).
-- ``geometry.obb``           - cv2.minAreaRect oriented boxes, belt + per region (M28).
+- ``geometry.kalman_edge``       - per-camera constant-velocity Kalman edge tracker (M27).
+- ``geometry.obb``               - cv2.minAreaRect oriented boxes, belt + per region (M28).
 
-References: Canny 1986; Fischler & Bolles 1981 (RANSAC), Comm. ACM 24(6); Radon transform
-(skimage ``radon``); Kalman 1960; OpenCV ``minAreaRect``.
+References: Canny 1986; Radon transform (skimage ``radon``); Kalman 1960; OpenCV
+``minAreaRect``.
 """
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,7 +27,6 @@ from .preprocess import apply_clahe_lab
 
 _CANNY_LO, _CANNY_HI = 50, 150
 _MAX_SEGMENTS = 40
-_MAX_POLYLINE = 24
 
 
 def _clahe_gray(image: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -80,82 +82,6 @@ def hough_edges(image: Any, *, angle_tol_deg: float = 35.0, **_: Any) -> dict[st
     )
 
 
-# --- M2: RANSAC + deg-2 polynomial edge fit --------------------------------------------
-def _ransac_poly(
-    ys: np.ndarray, xs: np.ndarray, deg: int, iters: int, thresh: float, rng: np.random.Generator
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    n = ys.shape[0]
-    if n < deg + 1:
-        return None, None
-    best_coeffs: np.ndarray | None = None
-    best_inliers: np.ndarray | None = None
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # poorly-conditioned fits are expected and handled
-        for _ in range(iters):
-            idx = rng.choice(n, deg + 1, replace=False)
-            try:
-                coeffs = np.polyfit(ys[idx], xs[idx], deg)
-            except (np.linalg.LinAlgError, ValueError):
-                continue
-            res = np.abs(np.polyval(coeffs, ys) - xs)
-            inliers = res < thresh
-            if best_inliers is None or int(inliers.sum()) > int(best_inliers.sum()):
-                best_coeffs, best_inliers = coeffs, inliers
-        if best_coeffs is not None and best_inliers is not None and int(best_inliers.sum()) >= deg + 1:
-            best_coeffs = np.polyfit(ys[best_inliers], xs[best_inliers], deg)
-    return best_coeffs, best_inliers
-
-
-def _fit_side(
-    pts: np.ndarray, deg: int, h: int, rng: np.random.Generator
-) -> dict[str, Any] | None:
-    if pts.shape[0] < deg + 1:
-        return None
-    ys, xs = pts[:, 1].astype(np.float64), pts[:, 0].astype(np.float64)
-    coeffs, inliers = _ransac_poly(ys, xs, deg=deg, iters=120, thresh=3.0, rng=rng)
-    if coeffs is None:
-        return None
-    sample_y = np.linspace(0, h - 1, _MAX_POLYLINE)
-    poly_x = np.polyval(coeffs, sample_y)
-    n_in = int(inliers.sum()) if inliers is not None else 0
-    return {
-        "coeffs": [round(float(c), 6) for c in coeffs],
-        "inliers": n_in,
-        "inlier_ratio": round(n_in / max(pts.shape[0], 1), 4),
-        "polyline": [
-            [round(float(x), 2), round(float(y), 2)]
-            for x, y in zip(poly_x, sample_y, strict=False)
-        ],
-    }
-
-
-def ransac_edges(image: Any, *, degree: int = 2, seed: int = 34, **_: Any) -> dict[str, Any]:
-    """Robust deg-2 polynomial fit of the left/right belt edges from Canny edge points."""
-    _bgr, gray = _clahe_gray(image)
-    h, w = gray.shape
-    rng = np.random.default_rng(int(seed))
-    with timed() as t:
-        edges = _canny(gray)
-        ys, xs = np.nonzero(edges)
-        pts = np.stack([xs, ys], axis=1)
-        centre = w * 0.5
-        left = _fit_side(pts[pts[:, 0] < centre], degree, h, rng)
-        right = _fit_side(pts[pts[:, 0] >= centre], degree, h, rng)
-    payload = {
-        "shape": [int(h), int(w)],
-        "degree": int(degree),
-        "n_edge_points": int(pts.shape[0]),
-        "left_edge": left,
-        "right_edge": right,
-        "both_edges_found": bool(left is not None and right is not None),
-    }
-    return result(
-        "geometry.ransac_edges", "geometry", "classical",
-        "Fischler & Bolles 1981 (RANSAC), Comm. ACM 24(6); polynomial edge fit",
-        payload=payload, model_bytes=0, infer_ms=t.ms, web_drivable=True,
-    )
-
-
 # --- M3: Radon dominant orientation ----------------------------------------------------
 def radon_orientation(image: Any, *, max_side: int = 128, **_: Any) -> dict[str, Any]:
     """Dominant structural orientation via the Radon transform (noise-robust vs Hough)."""
@@ -190,62 +116,6 @@ def radon_orientation(image: Any, *, max_side: int = 128, **_: Any) -> dict[str,
         "geometry.radon_orientation", "geometry", "classical",
         "Radon transform; skimage.transform.radon",
         payload=payload, model_bytes=0, infer_ms=t.ms, web_drivable=False,
-    )
-
-
-# --- M26: misalignment metrics ---------------------------------------------------------
-def misalignment(
-    image: Any, *, degree: int = 2, seed: int = 34, px_per_mm: float | None = None,
-    tolerance_frac: float = 0.05, **_: Any,
-) -> dict[str, Any]:
-    """Centreline deviation, width profile, skew and flags derived from fitted edges."""
-    _bgr, gray = _clahe_gray(image)
-    h, w = gray.shape
-    with timed() as t:
-        edges = _canny(gray)
-        ys, xs = np.nonzero(edges)
-        pts = np.stack([xs, ys], axis=1)
-        rng = np.random.default_rng(int(seed))
-        centre = w * 0.5
-        left = _fit_side(pts[pts[:, 0] < centre], degree, h, rng)
-        right = _fit_side(pts[pts[:, 0] >= centre], degree, h, rng)
-
-        metrics: dict[str, Any] = {"both_edges_found": bool(left and right)}
-        if left and right:
-            sample_y = np.linspace(0, h - 1, _MAX_POLYLINE)
-            lx = np.polyval(np.array(left["coeffs"]), sample_y)
-            rx = np.polyval(np.array(right["coeffs"]), sample_y)
-            width = rx - lx
-            centreline = (lx + rx) * 0.5
-            dev_px = float(np.mean(centreline) - centre)
-            # Skew: angle of each edge over the sampled span (deg from vertical).
-            l_ang = float(np.degrees(np.arctan2(lx[-1] - lx[0], h)))
-            r_ang = float(np.degrees(np.arctan2(rx[-1] - rx[0], h)))
-            metrics.update(
-                {
-                    "mean_width_px": round(float(np.mean(width)), 2),
-                    "width_std_px": round(float(np.std(width)), 2),
-                    "width_profile_px": [round(float(v), 2) for v in width],
-                    "centreline_deviation_px": round(dev_px, 2),
-                    "centreline_deviation_frac": round(dev_px / max(w, 1), 4),
-                    "left_edge_angle_deg": round(l_ang, 3),
-                    "right_edge_angle_deg": round(r_ang, 3),
-                    "edge_skew_deg": round(abs(l_ang - r_ang), 3),
-                    "misaligned": bool(abs(dev_px) > tolerance_frac * w),
-                    "crooked": bool(np.std(width) > 0.1 * max(np.mean(width), 1.0)),
-                }
-            )
-            if px_per_mm and px_per_mm > 0:
-                metrics["centreline_deviation_mm"] = round(dev_px / px_per_mm, 3)
-                metrics["mean_width_mm"] = round(float(np.mean(width)) / px_per_mm, 3)
-                metrics["calibration"] = "absolute-mm"
-            else:
-                metrics["calibration"] = "relative-px-only (no px_per_mm; mm not fabricated)"
-    payload = {"shape": [int(h), int(w)], **metrics}
-    return result(
-        "geometry.misalignment", "geometry", "classical",
-        "Derived from RANSAC-polynomial edges (Fischler & Bolles 1981)",
-        payload=payload, model_bytes=0, infer_ms=t.ms, web_drivable=True,
     )
 
 

@@ -51,6 +51,77 @@ def _rosin_rammler(diam: np.ndarray) -> dict[str, Any]:
         return {"fitted": False, "reason": "curve_fit did not converge"}
 
 
+def psd_from_mask(
+    bgr: np.ndarray,
+    foreground: np.ndarray,
+    *,
+    px_per_mm: float | None = None,
+    oversize_px: float = 30.0,
+    min_area_px: int = 12,
+) -> dict[str, Any]:
+    """Watershed PSD computed ONLY inside a supplied foreground mask (e.g. the mineral layer).
+
+    Same delineation pipeline as :func:`watershed_psd` but the binary foreground is the
+    given mask rather than a whole-frame Otsu, so granulometry is measured on the
+    segmented material only (never the belt or the background).
+    """
+    import cv2
+    from scipy import ndimage as ndi
+    from skimage.feature import peak_local_max
+    from skimage.measure import regionprops
+    from skimage.segmentation import watershed
+
+    gray = cv2.cvtColor(apply_clahe_lab(bgr), cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    mask = cv2.morphologyEx(
+        (foreground > 0).astype(np.uint8), cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    ) > 0
+    dist = ndi.distance_transform_edt(mask)
+    min_dist = max(3, int(0.01 * min(h, w)))
+    coords = peak_local_max(dist, min_distance=min_dist, labels=mask)
+    markers = np.zeros(dist.shape, dtype=np.int32)
+    for i, (y, x) in enumerate(coords, start=1):
+        markers[y, x] = i
+    markers, _ = ndi.label(markers > 0)
+    labels = watershed(-dist, markers, mask=mask)
+    diam_px = [
+        float(np.sqrt(4.0 * prop.area / np.pi))
+        for prop in regionprops(labels)
+        if prop.area >= min_area_px
+    ]
+    diam = np.asarray(diam_px, dtype=np.float64)
+    if diam.size:
+        d10, d50, d80 = (float(np.percentile(diam, p)) for p in (10, 50, 80))
+        oversize_frac = float(np.mean(diam > oversize_px))
+        sorted_d = np.sort(diam)
+        cum = (np.arange(1, sorted_d.size + 1)) / sorted_d.size
+        step = max(1, sorted_d.size // _MAX_CURVE)
+        curve = [[round(float(sorted_d[i]), 3), round(float(cum[i]), 4)]
+                 for i in range(0, sorted_d.size, step)]
+        rr = _rosin_rammler(diam)
+    else:
+        d10 = d50 = d80 = 0.0
+        oversize_frac = 0.0
+        curve = []
+        rr = {"fitted": False, "reason": "no particles segmented in mineral mask"}
+    unit = "mm" if (px_per_mm and px_per_mm > 0) else "px"
+    scale = (1.0 / px_per_mm) if (px_per_mm and px_per_mm > 0) else 1.0
+    return {
+        "n_particles": int(diam.size),
+        "unit": unit,
+        "calibration": ("absolute-mm" if unit == "mm"
+                        else "relative-px-only (no px_per_mm; mm not fabricated)"),
+        "D10": round(d10 * scale, 3),
+        "D50": round(d50 * scale, 3),
+        "D80": round(d80 * scale, 3),
+        "oversize_frac": round(oversize_frac, 4),
+        "oversize_threshold_px": float(oversize_px),
+        "psd_curve": cap(curve, _MAX_CURVE),
+        "rosin_rammler": rr,
+    }
+
+
 def watershed_psd(
     image: Any,
     *,
