@@ -31,3 +31,7 @@ Thumbs.db
 # Pipeline outputs (regenerated, never committed)
 derived/
 data/derived/
+
+# Model weights (downloaded / lazily fetched, never committed to the engine repo)
+*.pt
+*.pth

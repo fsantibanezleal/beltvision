@@ -25,7 +25,14 @@ from beltvision.methods.geometry import reset_kalman
 from beltvision.methods.tracking import reset_tracker
 
 # Learned methods that require an optional downloaded/exported weight (weights_absent-capable).
-WEIGHT_GATED = {"segmentation.mobile_sam", "anomaly.conv_ae", "detection.onnx_detector"}
+# The beyond_sota / foundation methods are precompute-GPU-only: their LIVE surface always
+# degrades to weights_absent on the CPU runtime (the model is never hosted live), so they are
+# weight-gated here too.
+WEIGHT_GATED = {
+    "segmentation.mobile_sam", "anomaly.conv_ae", "detection.onnx_detector",
+    "features.dinov2", "anomaly.dinov2_knn", "depth.depth_anything_v2",
+    "detection.owlv2", "segmentation.grounded_sam", "segmentation.sam2",
+}
 # Everything else must produce a real "ok" result with no weight at all.
 ALWAYS_OK = set(list_methods()) - WEIGHT_GATED
 
