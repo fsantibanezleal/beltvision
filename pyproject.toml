@@ -43,7 +43,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The precompute lane: heavy SOTA engines, imported only when training/exporting.
+# CPU RUNTIME level ("web running"): CPU torch + onnxruntime + the light learned models
+# that fit the VPS. Installed in the app's CPU .venv (VPS emulation) via `beltvision[dl]`.
+# Installs from plain PyPI, so it needs no requirements file (a pyproject extra is enough).
+# (The GPU training level is the `gpu` extra below + requirements-precompute-gpu.txt, which
+#  carries the --extra-index-url for the CUDA torch build that an extra cannot express.)
 dl = [
     "torch>=2.3",
     "torchvision>=0.18",
@@ -66,18 +70,28 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
-# LOCAL PRECOMPUTE / TRAINING on a CUDA GPU (NOT the CPU VPS runtime). The heavy models
-# and the offline catalogue precompute run here with device='cuda'. Pinned CUDA builds are
-# resolved in requirements-precompute-gpu.txt (install that in the .venv-gpu venv).
+# GPU TRAINING / PRECOMPUTE level (NOT the CPU VPS runtime): all the heavy models + the
+# offline catalogue precompute, run locally with device='cuda'. This extra is the SINGLE
+# source for the heavy GPU deps - there is no separate requirements-*.txt file.
+# The CUDA build of torch is the only thing an extra cannot pin (it needs a package index),
+# so pass that index once at install time, e.g. into a GPU venv:
+#     pip install -e ".[gpu]" --extra-index-url https://download.pytorch.org/whl/cu124
+# (Verified: torch 2.6.0+cu124 on an RTX 5000 Ada, sm_89, driver CUDA 12.8.)
 gpu = [
-    "torch>=2.3",
-    "torchvision>=0.18",
+    "torch>=2.4",
+    "torchvision>=0.19",
     "onnxruntime-gpu>=1.18",
     "ultralytics>=8.2",
     "transformers>=4.41",
     "timm>=1.0",
     "groundingdino-py>=0.4",
+    "segment-anything>=1.0",
     "anomalib>=1.1",
+    "faiss-cpu>=1.8",
+    "scikit-learn>=1.4",
+    "safetensors>=0.4",
+    "huggingface-hub>=0.23",
+    "einops>=0.8",
     "httpx>=0.27",
 ]
 

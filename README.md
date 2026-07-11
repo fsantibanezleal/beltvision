@@ -41,13 +41,25 @@ It is NOT:
 
 ## Install
 
+Dependencies are declared entirely in `pyproject.toml` as three levels (extras) - there are
+no `requirements-*.txt` files:
+
 ```bash
-# Core (classical stack only):
+# Core - classical CV only (numpy / opencv / scikit-image / scipy). Tiny, pure CPU:
 pip install beltvision
 
-# With the heavy precompute engines:
+# CPU RUNTIME level ("web running") - CPU torch + onnxruntime + light learned models.
+# This is what the app's CPU venv (VPS emulation) installs:
 pip install "beltvision[dl]"
+
+# GPU TRAINING / PRECOMPUTE level - all the heavy models, run locally on a CUDA GPU.
+# The CUDA torch build is the only thing an extra cannot pin (it needs a package index),
+# so pass that index once at install time:
+pip install "beltvision[gpu]" --extra-index-url https://download.pytorch.org/whl/cu124
 ```
+
+Two venvs, one per level: a CPU `.venv` (VPS emulation, `[dl]`) and a `.venv-gpu`
+(`[gpu]`, CUDA). Verified on an RTX 5000 Ada (sm_89), torch 2.6.0+cu124.
 
 Until the API stabilizes and the first release is published to PyPI, pin a git tag:
 
