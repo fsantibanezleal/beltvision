@@ -39,6 +39,63 @@ from .preprocess import apply_clahe_lab
 
 _WORK = 384  # working long-side for the per-pixel prior (upsampled back to full res)
 
+# --- Trained belt segmenter (PRIMARY when its weight is present) --------------------------
+# A compact SegFormer-B0 exported to ONNX (opset 17), trained on synthetic exact-GT belts +
+# MobileSAM weak labels on the real reference frames. It emits the same 4-class map the
+# classical prior does, but was learned on the real belt domain, so it isolates the belt on
+# hazy real frames (e.g. COLA 34) where the colour/texture prior grabs the water curtain and
+# mesh. When the weight is absent the classical prior below is the graceful fallback.
+_SEG_INPUT = 256
+_SEG_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)  # ImageNet (RGB), matches training
+_SEG_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+_SEG_ENGINE = "onnx-segformer-b0(belt-segmenter)"
+_SEG_CACHE: dict[str, Any] = {}
+
+
+def _belt_segmenter_session():
+    """Cached onnxruntime session for the trained belt segmenter, or ``None`` if absent."""
+    if "sess" in _SEG_CACHE:
+        return _SEG_CACHE["sess"]
+    sess = None
+    try:
+        from ..models import ensure_weight
+
+        path = ensure_weight("belt_segmenter_onnx")
+        if path is not None:
+            import onnxruntime as ort  # runtime-only dep (CPU provider on the VPS)
+
+            sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    except Exception:
+        sess = None
+    _SEG_CACHE["sess"] = sess
+    return sess
+
+
+def _onnx_label_map(bgr_clahe: np.ndarray) -> np.ndarray | None:
+    """Run the trained segmenter on a CLAHE-first BGR frame -> full-res 4-class map, or None.
+
+    Preprocessing is byte-for-byte the training transform: resize to the model input,
+    BGR->RGB, /255, ImageNet-normalize. Output logits (1,4,S,S) are argmaxed and upsampled
+    to the frame resolution with nearest-neighbour (label-preserving).
+    """
+    sess = _belt_segmenter_session()
+    if sess is None:
+        return None
+    try:
+        import cv2
+
+        h, w = bgr_clahe.shape[:2]
+        img = cv2.resize(bgr_clahe, (_SEG_INPUT, _SEG_INPUT), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        rgb = (rgb - _SEG_MEAN) / _SEG_STD
+        x = np.ascontiguousarray(rgb.transpose(2, 0, 1)[None])
+        name = sess.get_inputs()[0].name
+        logits = sess.run(None, {name: x})[0]
+        small = np.asarray(logits[0]).argmax(axis=0).astype(np.uint8)
+        return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+    except Exception:
+        return None
+
 # CLIP text prompts for the open-vocabulary per-region labeller (class -> prompts). The
 # tool is a GENERAL conveyor-belt inspector, so CONTENT = the transported material of ANY
 # domain. Domain-specific content prompt sets are selectable via ``content_prompts=``;
@@ -351,22 +408,48 @@ def _classify_region(bgr, mask, prior, clip) -> int:
 def compute_layers(
     image: Any, *, view_type: str | None = None, use_learned: bool = True
 ) -> Layers:
-    """Compute the 4-class semantic map. Numpy-level entry used by the orchestrator."""
+    """Compute the 4-class semantic map. Numpy-level entry used by the orchestrator.
+
+    Engine selection (measured, not hand-typed):
+    1. The trained belt segmenter (ONNX) is the PRIMARY engine when its weight is present -
+       it was learned on the real belt domain and isolates the belt where the colour/texture
+       prior fails on hazy frames. Its 4-class map is the base result.
+    2. Absent the weight, the ``classical-prior`` is the graceful fallback (both venvs, no
+       weight, VPS-affordable).
+    In both cases, when ``use_learned`` is set, the open-vocab MobileSAM+CLIP path may ADD the
+    FOREIGN class on top (its genuine strength) - it never overrides belt/content/external.
+    """
     import cv2
 
     bgr_full = apply_clahe_lab(as_bgr(image))
     h, w = bgr_full.shape[:2]
     small, _scale = _work_resize(bgr_full)
-    prior = _classical_scores(small, view_type)
 
-    # The classical prior is the reliable base map for belt / content / external.
-    labels_small = _clean_labels(prior, view_type)
-    engine = "classical-prior"
-    n_regions = 0
-    regions = _sam_regions(small) if use_learned else None
-    if regions:
-        # add the open-vocab FOREIGN class on top (its genuine strength); keep the rest.
-        labels_small, engine, n_regions = _add_foreign_regions(small, regions, labels_small, prior)
+    onnx_map = _onnx_label_map(bgr_full)
+    if onnx_map is not None:
+        # PRIMARY: the trained segmenter's 4-class map (full resolution).
+        labels_small = cv2.resize(onnx_map.astype(np.uint8), (small.shape[1], small.shape[0]),
+                                  interpolation=cv2.INTER_NEAREST).astype(np.int32)
+        engine = _SEG_ENGINE
+        n_regions = 0
+        if use_learned:
+            regions = _sam_regions(small)
+            if regions:
+                prior = _classical_scores(small, view_type)
+                labels_small, eng2, n_regions = _add_foreign_regions(
+                    small, regions, labels_small, prior)
+                engine = f"{_SEG_ENGINE} + {eng2}"
+    else:
+        # FALLBACK: the classical colour/texture prior is the reliable base map.
+        prior = _classical_scores(small, view_type)
+        labels_small = _clean_labels(prior, view_type)
+        engine = "classical-prior"
+        n_regions = 0
+        regions = _sam_regions(small) if use_learned else None
+        if regions:
+            # add the open-vocab FOREIGN class on top (its genuine strength); keep the rest.
+            labels_small, engine, n_regions = _add_foreign_regions(
+                small, regions, labels_small, prior)
 
     # tidy + upsample to full resolution
     labels_small = _postprocess(labels_small, view_type)
@@ -401,16 +484,22 @@ def semantic_layers(
 ) -> dict[str, Any]:
     """Method wrapper: run the 4-class segmentation and return a JSON-safe summary.
 
-    The live method defaults to the classical prior (``use_learned=False``); the heavy
-    open-vocab path (MobileSAM automatic masks, ~minutes on CPU) is opt-in and used by the
-    offline precompute lane which passes ``use_learned=True``.
+    The trained belt segmenter (ONNX) is the PRIMARY engine when its weight is present and
+    is web-drivable (small, CPU/WASM-affordable). Absent it, the live method uses the
+    classical prior (``use_learned=False``); the heavy open-vocab path (MobileSAM automatic
+    masks, ~minutes on CPU) is opt-in and used by the offline precompute lane
+    (``use_learned=True``).
     """
-    ref = "SAM (Kirillov 2023) / MobileSAM Apache-2.0 + CLIP (Radford 2021); classical colour/texture prior"
+    ref = ("SegFormer-B0 (Xie 2021) trained belt segmenter [primary]; classical colour/texture "
+           "prior [fallback]; MobileSAM Apache-2.0 + CLIP (Radford 2021) foreign [opt-in]")
     with timed() as t:
         layers = compute_layers(image, view_type=view_type, use_learned=use_learned)
-    from ..models import is_present
+    from ..models import ensure_weight, is_present
 
-    model_bytes = 40 * 1024 * 1024 if (use_learned and is_present("mobile_sam")) else 0
+    seg_path = ensure_weight("belt_segmenter_onnx")
+    seg_bytes = seg_path.stat().st_size if seg_path is not None else 0
+    sam_bytes = 40 * 1024 * 1024 if (use_learned and is_present("mobile_sam")) else 0
+    model_bytes = seg_bytes + sam_bytes
     payload = {
         "shape": [int(layers.label_map.shape[0]), int(layers.label_map.shape[1])],
         "classes": list(CLASS_NAMES.values()),
