@@ -124,3 +124,40 @@ def test_registry_wrappers_run_on_synthetic_belt():
     # a near-vertical belt: any lines found sit near the 90 deg belt axis.
     for a in h["angles_deg"]:
         assert _ang_diff(a, h["theta_center_deg"]) <= h["theta_band_deg"] + 1e-6
+
+
+# --- belt-edge pair extraction: pick the TWO edges, report width + centreline -------------
+def test_extract_belt_edges_finds_the_pair_and_measures_width():
+    # two horizontal (axis 0deg) edges, 300 px apart on the belt normal.
+    segs = [
+        {"p0": [50, 100], "p1": [950, 100], "angle_deg": 0.0, "support_px": 500},
+        {"p0": [50, 400], "p1": [950, 400], "angle_deg": 0.0, "support_px": 500},
+    ]
+    r = constrained.extract_belt_edges(segs, theta_center_deg=0.0, frame_shape=(500, 1000))
+    assert r["found"] is True
+    assert abs(r["width_px"] - 300.0) < 1.0
+    # edge_a is the smaller-normal-position edge (y~100), edge_b the larger (y~400).
+    assert r["edge_a"]["p0"][1] < r["edge_b"]["p0"][1]
+    assert r["centreline"] is not None  # a centreline was synthesised at the mid position
+
+
+def test_extract_belt_edges_is_noise_robust_two_clusters_from_many_lines():
+    rng = np.random.default_rng(0)
+    segs = []
+    for _ in range(6):  # a cluster near y=100
+        segs.append({"p0": [10, 100 + int(rng.integers(-3, 4))],
+                     "p1": [990, 100 + int(rng.integers(-3, 4))],
+                     "angle_deg": 0.0, "support_px": 400})
+    for _ in range(6):  # a cluster near y=400
+        segs.append({"p0": [10, 400 + int(rng.integers(-3, 4))],
+                     "p1": [990, 400 + int(rng.integers(-3, 4))],
+                     "angle_deg": 0.0, "support_px": 400})
+    r = constrained.extract_belt_edges(segs, theta_center_deg=0.0, frame_shape=(500, 1000))
+    assert r["found"] is True
+    assert 290.0 < r["width_px"] < 310.0  # the two physical edges, not noise-to-noise spread
+
+
+def test_extract_belt_edges_needs_two_segments():
+    assert constrained.extract_belt_edges([], theta_center_deg=0.0)["found"] is False
+    one = [{"p0": [0, 0], "p1": [10, 0], "angle_deg": 0.0, "support_px": 5}]
+    assert constrained.extract_belt_edges(one, theta_center_deg=0.0)["found"] is False

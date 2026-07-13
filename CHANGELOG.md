@@ -6,6 +6,31 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.10.000] - 2026-07-13
+
+### Fixed
+
+- **Node DAG threading (`pipeline_graph._edge_map`).** A detect node fed a non-binary image
+  rebuilt its edge map from `ctx["frame"]` (the raw original), silently discarding every
+  upstream CLAHE / denoise / ROI stage. It now preprocesses the actual node input, so the
+  pipeline threads correctly.
+
+### Added
+
+- **Per-ROI detection.** `pipeline_graph.apply_roi` now rasterises each drawn annotation
+  separately and exposes them as `ctx["roi_masks"]`. When more than one ROI is present, the
+  `hough_constrained` and `ransac_line_constrained` ops run **once per region** and merge the
+  results, instead of detecting on a single unioned mask — so a left-edge ROI and a
+  right-edge ROI are analysed independently.
+- **Belt-edge pair extraction.** `constrained.extract_belt_edges(segments, theta_center_deg)`
+  selects the two belt edges from a set of in-band lines via a gap-maximising 2-cluster split
+  (longest representative per cluster, so noise loses to a true edge), and reports
+  `edge_a` / `edge_b`, belt `width_px` (and mm when a scale is set), and the belt centreline.
+  Exposed as the `belt_edges` pipeline op and wired into the `belt_detection` template
+  (`… → hough_constrained → belt_edges → measure_lines`).
+- Regression tests: `extract_belt_edges` pair/width/noise-robustness/degenerate cases;
+  per-ROI mask population; the `belt_edges` op inside a pipeline.
+
 ## [0.09.000] - 2026-07-11
 
 ### Added
