@@ -6,6 +6,22 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.10.001] - 2026-07-13
+
+### Fixed
+
+- **Belt-axis orientation prior with one ROI per belt edge (`roi.orientation_band`).** When a
+  user draws a separate ROI strip on each belt edge (the required per-ROI workflow),
+  `orientation_band` rasterised all belt annotations jointly and took a single oriented box.
+  Two vertical strips placed left/right form a box wider than tall, so the joint long edge
+  came out **horizontal** — the constrained Hough then searched the wrong orientation and
+  found only one line, so `extract_belt_edges` failed. Now `_per_annotation_orientation`
+  measures each annotation's own long-edge angle and takes the period-180 circular mean
+  (`_axis_circular_mean`), recovering the true belt axis regardless of how the strips are
+  arranged. Proven on the real COLA 34 frame: belt axis 90° (was ~horizontal), 10 in-band
+  lines across two ROIs, belt edges found, width 325 px, one edge per ROI + centreline.
+- **`__version__`** was left at 0.9.0 while `pyproject` moved to 0.10.0; both are now 0.10.1.
+
 ## [0.10.000] - 2026-07-13
 
 ### Fixed
