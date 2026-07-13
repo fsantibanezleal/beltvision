@@ -144,6 +144,44 @@ def _mask_orientation(annotations: list[dict[str, Any]], shape: Any) -> float | 
     return _long_edge_angle(np.stack([xs.astype(np.float64), ys.astype(np.float64)], axis=1))
 
 
+def _axis_circular_mean(angles_deg: list[float]) -> float | None:
+    """Circular mean of AXIS angles in ``[0, 180)`` (period 180, so double-angle averaging).
+
+    Axis angles wrap at 180deg, not 360, so a plain mean is wrong (e.g. 1deg and 179deg
+    average to 90deg, not 0deg). Doubling maps them onto a full circle where the vector mean
+    is well-defined; halving the result returns the mean axis.
+    """
+    if not angles_deg:
+        return None
+    a = np.radians(np.asarray(angles_deg, dtype=np.float64) * 2.0)
+    s, c = float(np.sin(a).mean()), float(np.cos(a).mean())
+    if abs(s) < 1e-9 and abs(c) < 1e-9:  # antipodal cancellation -> undefined
+        return None
+    return float((np.degrees(np.arctan2(s, c)) / 2.0) % 180.0)
+
+
+def _per_annotation_orientation(annotations: list[dict[str, Any]], shape: Any) -> float | None:
+    """Belt-axis orientation as the circular mean of EACH annotation's own long-edge angle.
+
+    Rasterising all annotations JOINTLY and taking one oriented box is wrong when the user
+    draws one ROI strip per belt edge: two vertical strips placed left/right make a box that
+    is wider than tall, so the joint long edge comes out HORIZONTAL and the constrained
+    detector then hunts for the wrong orientation. Measuring each strip on its own (each is
+    vertical) and averaging recovers the true belt axis regardless of how the strips are
+    spatially arranged.
+    """
+    angs: list[float] = []
+    for a in annotations:
+        m = rasterize([a], shape)
+        if not m.any():
+            continue
+        ys, xs = np.nonzero(m)
+        ang = _long_edge_angle(np.stack([xs.astype(np.float64), ys.astype(np.float64)], axis=1))
+        if ang is not None:
+            angs.append(ang)
+    return _axis_circular_mean(angs)
+
+
 def _long_sides(points: np.ndarray) -> list[list[list[float]]] | None:
     """The two long sides of the point set's oriented box, as ``[[x0,y0],[x1,y1]]`` lines."""
     import cv2
@@ -233,7 +271,9 @@ def orientation_band(
         belt_anns = [a for a in anns if str(a.get("label", "")) in BELT_LIMIT_LABELS]
         src = belt_anns if belt_anns else anns
         if shape is not None:
-            center = _mask_orientation(src, shape)  # rasterise -> oriented box (rect-safe)
+            # per-annotation circular mean: correct when one ROI is drawn per belt edge
+            # (joint rasterisation of separated strips yields the wrong, transverse axis).
+            center = _per_annotation_orientation(src, shape)
         if center is None:
             center = _long_edge_angle(_pts_of(src))
 
