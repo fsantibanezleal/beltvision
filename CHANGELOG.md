@@ -6,6 +6,32 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.000] - 2026-07-13
+
+### Added
+
+- **`beltvision.methods.robust` — staged (cascade) multi-pipeline belt analysis.** Replaces the
+  single fragile mask-derived analyses (which produced a diagonal-nonsense centreline, "0
+  regions / severity none", and `applicable: false` on real frames). Each stage runs SEVERAL
+  complementary pipelines fused with an agreement-based confidence, and always shows informative
+  content — never a bare "not applicable" or an invented single line.
+  - `orientation_consensus(gray)` — global belt-travel alignment fused from Radon (noise/
+    illumination-robust), FFT dominant peak, and the structure tensor; agreement = confidence.
+  - `belt_band(image)` — two belt limits via **signed oriented-gradient projection onto the
+    belt-normal axis** (the two most-prominent opposite-polarity peaks = the parallel belt
+    edges), cross-checked by constrained Hough, fused. **Centreline = the MIDLINE of the two
+    limits** (never a medial axis); width = their perpendicular separation. Confident on clean
+    belts, honest low-confidence candidates + Studio deferral on ambiguous frames (validated on
+    the real COLA 34 water-curtain frame and clean iron-ore frames).
+  - `damage(image, band=...)` — RGB **anomaly ensemble** (illumination residual + wavelet
+    texture-removal + FFT band-stop + morphological black/top-hat) INSIDE the validated band,
+    fused to a heatmap + flagged regions; states the RGB-only limitation honestly (no laser/
+    depth/labelled defects) and flags likely-loaded (content-occluded) bands.
+  - `edge_condition(image, band=...)` — border strength/continuity/roughness/notches sampled
+    ALONG the validated limits (not a raw mask boundary); conservative RGB heuristic; gates to
+    n/a when the band is low-confidence.
+  - `band_mask_from_edges(shape, edge_a, edge_b)` helper. 8 regression tests; ruff clean.
+
 ## [0.10.001] - 2026-07-13
 
 ### Fixed
