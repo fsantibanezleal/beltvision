@@ -49,7 +49,8 @@ def test_op_registry_and_catalog_shape():
 
 
 def test_templates_present_and_get_template_is_a_copy():
-    assert set(pg.list_templates()) == {"belt_detection", "belt_condition", "material_on_belt"}
+    assert set(pg.list_templates()) == {"belt_detection", "belt_condition", "material_on_belt",
+                                        "robust_cascade"}
     spec = pg.get_template("belt_detection")
     spec["nodes"].append({"id": "junk", "op": "to_gray", "inputs": []})
     assert len(pg.get_template("belt_detection")["nodes"]) < len(spec["nodes"])  # deep copy

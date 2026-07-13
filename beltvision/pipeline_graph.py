@@ -14,9 +14,9 @@ ROI-masked, orientation-constrained input, never the raw frame.
 - :func:`run_pipeline` executes a spec ``{"nodes":[{"id","op","params","inputs":[ids]}]}``
   topologically, threads each node's output image to its consumers and captures every node's
   overlay + metrics. One node failing is recorded in ``errors`` and never aborts the run.
-- :data:`TEMPLATES` ships the three correctly-staged pipelines (``belt_detection``,
-  ``belt_condition``, ``material_on_belt``); :func:`list_templates` / :func:`get_template`
-  expose them.
+- :data:`TEMPLATES` ships the correctly-staged pipelines (``belt_detection``,
+  ``belt_condition``, ``material_on_belt``, and ``robust_cascade`` — the auto multi-pipeline
+  cascade driven by your ROI); :func:`list_templates` / :func:`get_template` expose them.
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ import numpy as np
 
 from .methods import constrained, features, granulometry
 from .methods import measure as measure_mod
+from .methods import robust as robust_mod
 from .methods import roi as roi_mod
 from .methods import transforms as tf
 from .methods._common import ENVELOPE_KEYS, as_bgr
@@ -618,6 +619,24 @@ def _op_belt_edges(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> d
     return _ok(image, to_png_b64(canvas), metrics)
 
 
+# --- ROBUST CASCADE ops (the auto multi-pipeline analyses, drivable with ROIs) ----------
+def _op_robust_belt_band(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Robust belt-band detector (orientation consensus + normal-projection two-limits + Hough
+    cross-check). Honours the drawn ROI mask, so a user's ROI focuses/boosts the estimate."""
+    rec = robust_mod.belt_band(ctx["frame"], roi_mask=_roi_mask(ctx))
+    return _ok(image, rec.get("overlay_b64"), _metrics_of(rec))
+
+
+def _op_robust_damage(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Robust damage: RGB anomaly ensemble inside the belt band (belt/content split when a
+    'content' ROI is drawn). Runs the robust belt_band first, then damage within it."""
+    band = robust_mod.belt_band(ctx["frame"], roi_mask=_roi_mask(ctx))
+    content = roi_mod.combine_by_label(ctx.get("rois") or [], ctx["shape"], "content")
+    rec = robust_mod.damage(ctx["frame"], band=band,
+                            content_mask=(content if content.any() else None))
+    return _ok(image, rec.get("overlay_b64"), _metrics_of(rec))
+
+
 # --- MEASURE ----------------------------------------------------------------------------
 def _first_geometry(ctx: dict[str, Any]) -> list[list[list[float]]]:
     """Pull line segments from the first upstream detect node that produced any."""
@@ -780,6 +799,15 @@ OP_REGISTRY: dict[str, dict[str, Any]] = {
                          "Belt-edge pair extraction: 2-cluster split of upstream in-band lines "
                          "→ edge_a / edge_b / width_px / centreline "
                          "(beltvision.methods.constrained.extract_belt_edges)"),
+    # robust cascade (auto multi-pipeline, ROI-drivable)
+    "robust_belt_band": _entry(_op_robust_belt_band, "detect",
+                               "Robust belt band: orientation consensus (Radon/FFT/structure-tensor) "
+                               "+ normal-projection two-limits + Hough cross-check, fused with an "
+                               "agreement confidence; centreline = midline of the limits "
+                               "(beltvision.methods.robust.belt_band)"),
+    "robust_damage": _entry(_op_robust_damage, "detect",
+                            "Robust damage: RGB anomaly ensemble (illum+wavelet+FFT+morph) inside "
+                            "the belt band, with belt/content split (beltvision.methods.robust.damage)"),
     # measure
     "measure_lines": _entry(_op_measure_lines, "measure",
                             "Angle/length over detected lines (beltvision.methods.measure)"),
@@ -926,6 +954,20 @@ TEMPLATES: dict[str, dict[str, Any]] = {
             {"id": "thresh", "op": "otsu", "params": {}, "inputs": ["wavelet"]},
             {"id": "morph", "op": "close", "params": {"ksize": 5}, "inputs": ["thresh"]},
             {"id": "anomaly", "op": "measure_objects", "params": {}, "inputs": ["morph"]},
+        ],
+    },
+    # the robust auto cascade, drivable with ROIs — the "refine in Studio" target: draw an ROI
+    # on the belt (and optionally a 'content' ROI) and re-run the same robust analysis the
+    # Precomputed Analysis tab shows, with your ROI focusing the estimate.
+    "robust_cascade": {
+        "focus": "belt_detection",
+        "description": "Robust belt band (orientation consensus + two-limits + Hough) then RGB "
+                       "anomaly damage inside it — the auto cascade, focused by your ROI.",
+        "nodes": [
+            {"id": "roi", "op": "apply_roi",
+             "params": {"label": ["expected-belt-limits", "belt-section", "belt"]}, "inputs": []},
+            {"id": "band", "op": "robust_belt_band", "params": {}, "inputs": ["roi"]},
+            {"id": "damage", "op": "robust_damage", "params": {}, "inputs": ["band"]},
         ],
     },
     # roi=content -> segment -> watershed -> granulometry
