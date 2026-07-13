@@ -123,11 +123,17 @@ def _band(ctx: dict[str, Any], params: dict[str, Any]) -> tuple[float, float]:
 
 
 def _edge_map(image: Any, ctx: dict[str, Any], params: dict[str, Any]) -> np.ndarray:
+    import cv2
+
     a = np.asarray(image)
     if a.ndim == 2 and _is_binary(a):
         return a > 0
+    # Use the actual node's input image, not ctx["frame"]: upstream preprocessing must thread
+    # correctly through the DAG.  Falling back to ctx["frame"] would silently discard every
+    # upstream CLAHE / denoise / ROI step whenever the input to a detect node is non-binary.
+    bgr_in = as_bgr(a) if a.ndim == 3 else cv2.cvtColor(_gray_u8(a), cv2.COLOR_GRAY2BGR)
     return constrained.preprocess_for_lines(
-        ctx["frame"], roi_mask=_roi_mask(ctx),
+        bgr_in, roi_mask=_roi_mask(ctx),
         denoise=params.get("denoise", "gaussian"), edge=params.get("edge", "canny"))
 
 
@@ -137,12 +143,29 @@ def _op_apply_roi(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> di
 
     label = params.get("label") or params.get("labels")
     anns = ctx.get("rois") or []
+
+    # Select annotations that match the label (str or list); if no label, take all.
     if label:
-        mask = roi_mod.combine_by_label(anns, ctx["shape"], label)
-    elif anns:
-        mask = roi_mod.rasterize(anns, ctx["shape"])
+        wanted = {label} if isinstance(label, str) else set(label)
+        selected = [a for a in anns if str(a.get("label", "")) in wanted]
     else:
-        mask = np.ones(ctx["shape"][:2], dtype=bool)  # nothing drawn -> whole frame
+        selected = list(anns)
+
+    if selected:
+        # Rasterise each annotation separately, then union them.
+        # ctx["roi_masks"] is the per-annotation list so detect ops can run once per ROI.
+        per_ann = [roi_mod.rasterize([a], ctx["shape"]) for a in selected]
+        mask = np.zeros(ctx["shape"][:2], dtype=bool)
+        valid_masks: list[np.ndarray] = []
+        for m in per_ann:
+            mask |= m
+            if m.any():
+                valid_masks.append(m)
+        ctx["roi_masks"] = valid_masks
+    else:
+        mask = np.ones(ctx["shape"][:2], dtype=bool)
+        ctx["roi_masks"] = []
+
     ctx["roi_mask"] = mask if mask.any() else None
     disp = _display_bgr(ctx["frame"])
     if mask.any() and not mask.all():
@@ -152,11 +175,12 @@ def _op_apply_roi(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> di
         cnts, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(disp, cnts, -1, (60, 200, 255), 2, cv2.LINE_AA)
     frac = float(mask.mean())
+    n_rois = len(ctx["roi_masks"])
     b64 = _step(disp, "region of interest",
-                f"ROI '{label}': {int(mask.sum())} px ({frac*100:.0f}% of frame). Downstream "
-                "detectors are restricted to this region.")
+                f"ROI '{label}': {int(mask.sum())} px ({frac*100:.0f}% of frame), "
+                f"{n_rois} annotation(s). Line detectors will run once per ROI.")
     return _ok(image, b64, {"roi_label": label, "roi_area_px": int(mask.sum()),
-                            "roi_frac": round(frac, 4)})
+                            "roi_frac": round(frac, 4), "n_rois": n_rois})
 
 
 # --- PREPROCESS -------------------------------------------------------------------------
@@ -389,8 +413,45 @@ def _op_thin(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[st
 
 # --- DETECT -----------------------------------------------------------------------------
 def _op_hough_constrained(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
-    be = _edge_map(image, ctx, params)
+    import cv2
+
     center, band = _band(ctx, params)
+    roi_masks = ctx.get("roi_masks") or []
+
+    if len(roi_masks) > 1:
+        # Per-ROI: the user drew one annotation per belt region (e.g., left-edge strip and
+        # right-edge strip).  Run constrained Hough separately within each ROI and merge.
+        # This is the correct behaviour: union-then-detect can confuse lines across regions.
+        be_full = _edge_map(image, ctx, params)
+        all_segments: list[dict[str, Any]] = []
+        for per_mask in roi_masks:
+            be_per = be_full & per_mask
+            if params.get("use_gate", True):
+                be_per = constrained.gradient_orientation_gate(be_per, ctx["clahe_gray"],
+                                                               center, band)
+            rec = constrained.hough_constrained(be_per, center, band,
+                                                min_len_px=params.get("min_len_px"),
+                                                roi_mask=per_mask, bgr=None)
+            all_segments.extend(rec.get("segments") or [])
+
+        canvas = _display_bgr(ctx["frame"])
+        for s in all_segments:
+            p0 = (int(round(s["p0"][0])), int(round(s["p0"][1])))
+            p1 = (int(round(s["p1"][0])), int(round(s["p1"][1])))
+            cv2.line(canvas, p0, p1, (70, 230, 70), 2, cv2.LINE_AA)
+        lo, hi = round(center - band, 1), round(center + band, 1)
+        draw_legend(canvas, [((70, 230, 70), f"per-ROI in-band lines [{lo}, {hi}]deg")])
+        draw_summary(canvas, f"Constrained Hough (per-ROI): {len(all_segments)} line(s) across "
+                             f"{len(roi_masks)} ROIs, all within {center:.0f}+/-{band:.0f}deg.")
+        metrics: dict[str, Any] = {
+            "n_lines": len(all_segments), "segments": all_segments,
+            "theta_center_deg": round(center, 2), "theta_band_deg": round(band, 2),
+            "n_rois": len(roi_masks), "per_roi": True,
+        }
+        return _ok(image, to_png_b64(canvas), metrics)
+
+    # Single mask (or no mask): standard constrained Hough.
+    be = _edge_map(image, ctx, params)
     if params.get("use_gate", True):
         be = constrained.gradient_orientation_gate(be, ctx["clahe_gray"], center, band)
     rec = constrained.hough_constrained(be, center, band, min_len_px=params.get("min_len_px"),
@@ -399,13 +460,48 @@ def _op_hough_constrained(image: Any, params: dict[str, Any], ctx: dict[str, Any
 
 
 def _op_ransac_line_constrained(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
-    be = _edge_map(image, ctx, params)
+    import cv2
+
     center, band = _band(ctx, params)
+    roi_masks = ctx.get("roi_masks") or []
+
+    if len(roi_masks) > 1:
+        be_full = _edge_map(image, ctx, params)
+        all_lines: list[dict[str, Any]] = []
+        for per_mask in roi_masks:
+            be_per = be_full & per_mask
+            if params.get("use_gate", True):
+                be_per = constrained.gradient_orientation_gate(be_per, ctx["clahe_gray"],
+                                                               center, band)
+            rec = constrained.ransac_line_constrained(be_per, center, band,
+                                                      roi_mask=per_mask, bgr=None)
+            all_lines.extend(rec.get("lines") or [])
+
+        canvas = _display_bgr(ctx["frame"])
+        for ln in all_lines:
+            p0 = (int(round(ln["p0"][0])), int(round(ln["p0"][1])))
+            p1 = (int(round(ln["p1"][0])), int(round(ln["p1"][1])))
+            cv2.line(canvas, p0, p1, (60, 200, 60), 3, cv2.LINE_AA)
+        lo, hi = round(center - band, 1), round(center + band, 1)
+        draw_legend(canvas, [((60, 200, 60), f"per-ROI RANSAC lines [{lo}, {hi}]deg")])
+        draw_summary(canvas, f"Constrained RANSAC (per-ROI): {len(all_lines)} line(s) across "
+                             f"{len(roi_masks)} ROIs, all within {center:.0f}+/-{band:.0f}deg.")
+        metrics: dict[str, Any] = {
+            "n_lines": len(all_lines), "lines": all_lines,
+            "segments": all_lines,  # alias so measure_lines / belt_edges can consume either key
+            "theta_center_deg": round(center, 2), "theta_band_deg": round(band, 2),
+            "n_rois": len(roi_masks), "per_roi": True,
+        }
+        return _ok(image, to_png_b64(canvas), metrics)
+
+    be = _edge_map(image, ctx, params)
     if params.get("use_gate", True):
         be = constrained.gradient_orientation_gate(be, ctx["clahe_gray"], center, band)
     rec = constrained.ransac_line_constrained(be, center, band, roi_mask=_roi_mask(ctx),
                                               bgr=ctx["frame"])
-    return _ok(image, rec.get("overlay_b64"), _metrics_of(rec))
+    m = _metrics_of(rec)
+    m.setdefault("segments", m.get("lines") or [])  # expose under both keys
+    return _ok(image, rec.get("overlay_b64"), m)
 
 
 def _op_find_contours(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
@@ -449,6 +545,77 @@ def _op_harris(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[
 def _op_shi_tomasi(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     rec = features.shi_tomasi(ctx["frame"], mask=_roi_mask(ctx))
     return _ok(image, rec.get("overlay_b64"), _metrics_of(rec))
+
+
+def _op_belt_edges(image: Any, params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Extract the two belt-edge lines (edge_a / edge_b) from upstream Hough / RANSAC results.
+
+    Reads the ``segments`` or ``lines`` key from every upstream detect node, projects each
+    segment's midpoint onto the belt normal direction, applies a 2-cluster split that maximises
+    the inter-cluster gap, and returns the longest representative from each cluster.  Reports
+    belt width in pixels (and mm if ``px_per_mm`` is set) and the belt centreline.
+    """
+    import cv2
+
+    # Gather all segments / lines from upstream detect nodes.
+    all_segments: list[dict[str, Any]] = []
+    for in_res in ctx.get("inputs", []):
+        m = in_res.get("metrics") or {}
+        for key in ("segments", "lines"):
+            segs = m.get(key)
+            if segs:
+                all_segments.extend(segs)
+                break
+
+    center, band = _band(ctx, params)
+    result_dict = constrained.extract_belt_edges(
+        all_segments, center, frame_shape=ctx["shape"][:2])
+
+    canvas = _display_bgr(ctx["frame"])
+    label_pairs: list[tuple] = []
+    if result_dict["found"]:
+        edge_a = result_dict.get("edge_a")
+        edge_b = result_dict.get("edge_b")
+        for edge, col, tag in [
+            (edge_a, (60, 230, 80), "edge A"),
+            (edge_b, (80, 180, 255), "edge B"),
+        ]:
+            if edge:
+                p0 = (int(round(edge["p0"][0])), int(round(edge["p0"][1])))
+                p1 = (int(round(edge["p1"][0])), int(round(edge["p1"][1])))
+                cv2.line(canvas, p0, p1, col, 3, cv2.LINE_AA)
+                label_pairs.append((col, f"belt {tag}: {edge.get('angle_deg', '?'):.1f}deg"))
+        cl = result_dict.get("centreline")
+        if cl:
+            cen_col = (200, 200, 60)
+            cv2.line(canvas,
+                     (int(round(cl["p0"][0])), int(round(cl["p0"][1]))),
+                     (int(round(cl["p1"][0])), int(round(cl["p1"][1]))),
+                     cen_col, 2, cv2.LINE_AA)
+            px_per_mm = (ctx.get("priors") or {}).get("px_per_mm")
+            w_note = (f" = {result_dict['width_px'] / px_per_mm:.1f}mm"
+                      if px_per_mm and px_per_mm > 0 else "")
+            label_pairs.append((cen_col,
+                                 f"centreline, belt width={result_dict['width_px']:.0f}px{w_note}"))
+
+    draw_legend(canvas, label_pairs)
+    if result_dict["found"]:
+        draw_summary(canvas, f"Belt edges FOUND: A and B are the most-separated in-band line pair. "
+                             f"Width={result_dict['width_px']:.0f}px.")
+    else:
+        draw_summary(canvas, f"Belt edges NOT FOUND: {result_dict.get('reason', 'unknown reason')}. "
+                             "Draw ROI annotations on each belt edge and re-run belt_detection.")
+
+    metrics: dict[str, Any] = {k: v for k, v in result_dict.items()}
+    # Expose the two belt edges as 'segments' so downstream measure_lines picks them up.
+    if result_dict["found"]:
+        metrics["segments"] = [s for s in [result_dict.get("edge_a"),
+                                            result_dict.get("edge_b")] if s]
+    px_per_mm = (ctx.get("priors") or {}).get("px_per_mm")
+    if px_per_mm and px_per_mm > 0 and result_dict.get("width_px"):
+        metrics["width_mm"] = round(result_dict["width_px"] / float(px_per_mm), 2)
+
+    return _ok(image, to_png_b64(canvas), metrics)
 
 
 # --- MEASURE ----------------------------------------------------------------------------
@@ -609,6 +776,10 @@ OP_REGISTRY: dict[str, dict[str, Any]] = {
                            "threshold": {"type": "float", "default": 0.08}}),
     "harris": _entry(_op_harris, "detect", "Harris & Stephens 1988 corners"),
     "shi_tomasi": _entry(_op_shi_tomasi, "detect", "Shi & Tomasi 1994 good features"),
+    "belt_edges": _entry(_op_belt_edges, "detect",
+                         "Belt-edge pair extraction: 2-cluster split of upstream in-band lines "
+                         "→ edge_a / edge_b / width_px / centreline "
+                         "(beltvision.methods.constrained.extract_belt_edges)"),
     # measure
     "measure_lines": _entry(_op_measure_lines, "measure",
                             "Angle/length over detected lines (beltvision.methods.measure)"),
@@ -677,7 +848,8 @@ def run_pipeline(
     ctx: dict[str, Any] = {
         "frame": frame, "shape": frame.shape, "clahe_bgr": clahe_bgr,
         "clahe_gray": cv2.cvtColor(clahe_bgr, cv2.COLOR_BGR2GRAY),
-        "rois": rois or [], "priors": priors or {}, "roi_mask": None, "inputs": [],
+        "rois": rois or [], "priors": priors or {},
+        "roi_mask": None, "roi_masks": [], "inputs": [],
     }
     nodes = spec.get("nodes", []) if isinstance(spec, dict) else []
     spec_by_id = {n["id"]: n for n in nodes}
@@ -719,10 +891,14 @@ def run_pipeline(
 
 # --- TEMPLATES --------------------------------------------------------------------------
 TEMPLATES: dict[str, dict[str, Any]] = {
-    # gray -> clahe -> denoise -> edge -> roi -> constrained detect -> measure
+    # gray -> clahe -> denoise -> edge -> roi -> constrained detect -> belt_edges -> measure
     "belt_detection": {
         "focus": "belt_detection",
-        "description": "Straight belt edges/centreline via a constrained Hough on the ROI edge map.",
+        "description": (
+            "Straight belt edges + centreline via constrained Hough (per-ROI when multiple "
+            "ROIs are drawn); extract_belt_edges pairs the two most-separated in-band lines "
+            "as the left/right belt edges and reports belt width + centreline."
+        ),
         "nodes": [
             {"id": "clahe", "op": "clahe", "params": {}, "inputs": []},
             {"id": "gray", "op": "to_gray", "params": {}, "inputs": ["clahe"]},
@@ -732,7 +908,8 @@ TEMPLATES: dict[str, dict[str, Any]] = {
              "params": {"label": ["expected-belt-limits", "belt-section", "belt"]},
              "inputs": ["edges"]},
             {"id": "lines", "op": "hough_constrained", "params": {}, "inputs": ["roi"]},
-            {"id": "measure", "op": "measure_lines", "params": {}, "inputs": ["lines"]},
+            {"id": "belt_edges", "op": "belt_edges", "params": {}, "inputs": ["lines"]},
+            {"id": "measure", "op": "measure_lines", "params": {}, "inputs": ["belt_edges"]},
         ],
     },
     # roi=belt -> clahe -> illumination-normalise -> wavelet texture removal -> morphology -> anomaly
