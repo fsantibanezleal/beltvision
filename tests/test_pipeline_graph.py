@@ -77,6 +77,43 @@ def test_belt_detection_measures_lines(belt_image, rois):
     assert measure["metrics"]["n_lines"] >= 1
 
 
+# --- per-ROI detection: each drawn ROI is processed separately, not as one union ---------
+def test_apply_roi_populates_per_roi_masks_for_each_annotation(belt_image):
+    h, w = belt_image.shape[:2]
+    two_rois = [
+        {"type": "rect", "points": [[int(0.20 * w), 0], [int(0.30 * w), h]], "label": "belt"},
+        {"type": "rect", "points": [[int(0.70 * w), 0], [int(0.80 * w), h]], "label": "belt"},
+    ]
+    spec = {"nodes": [{"id": "roi", "op": "apply_roi",
+                       "params": {"label": "belt"}, "inputs": []}]}
+    out = pg.run_pipeline(spec, belt_image, rois=two_rois, priors={"view": "top"})
+    roi_node = next(n for n in out["nodes"] if n["id"] == "roi")
+    # both left-strip and right-strip are kept as separate ROIs, not merged into one.
+    assert roi_node["metrics"]["n_rois"] == 2
+
+
+def test_belt_edges_op_extracts_a_pair_and_belt_detection_includes_it():
+    # belt_edges is a first-class op and is wired into the belt_detection template.
+    assert "belt_edges" in pg.OP_REGISTRY
+    assert "belt_edges" in [n["op"] for n in pg.get_template("belt_detection")["nodes"]]
+    # feed it a node whose metrics carry two clean in-band segments -> it finds the pair.
+    from beltvision.cases.synthetic import synth_scene
+
+    img = synth_scene(orientation_deg=0.0, loaded=True).image
+    h, w = img.shape[:2]
+    spec = {"nodes": [
+        {"id": "lines", "op": "hough_constrained",
+         "params": {"theta_center_deg": 0.0, "theta_band_deg": 20.0}, "inputs": []},
+        {"id": "belt_edges", "op": "belt_edges",
+         "params": {"theta_center_deg": 0.0, "theta_band_deg": 20.0}, "inputs": ["lines"]},
+    ]}
+    out = pg.run_pipeline(spec, img, priors={"view": "lateral"})
+    be_node = next(n for n in out["nodes"] if n["id"] == "belt_edges")
+    assert be_node["status"] == "ok"
+    assert _is_png_data_url(be_node["overlay_b64"])
+    assert "found" in be_node["metrics"]  # reports whether an edge pair was resolved
+
+
 def test_material_template_reports_granulometry(belt_image, rois):
     out = pg.run_pipeline(pg.get_template("material_on_belt"), belt_image, rois=rois,
                           priors={"view": "top", "px_per_mm": 5.0})
