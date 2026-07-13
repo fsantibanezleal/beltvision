@@ -139,7 +139,7 @@ def analyze_scene(
                 st = "low_confidence"
             out[aid] = _mk_from_rec(aid, band_rec, st, s, applicable=True, lane=lane, mode=mode)
         elif aid == "damage":
-            dmg = robust.damage(bgr, band=band_rec)
+            dmg = robust.damage(bgr, band=band_rec, content_mask=layers.content_mask)
             s = (f"RGB anomaly ensemble inside the belt band: {dmg['n_damage_regions']} "
                  f"region(s), severity {dmg['severity']:.2f} ({dmg['severity_label']}).")
             if dmg.get("likely_loaded"):

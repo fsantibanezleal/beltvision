@@ -6,6 +6,16 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.002] - 2026-07-13
+
+### Added
+
+- **Damage belt/content split (`robust.damage(..., content_mask=...)`)** — when the semantic
+  content layer is passed, the transported material is EXCLUDED from the belt band so damage is
+  read on the exposed belt only; the ore/coal texture is no longer mistaken for belt defects.
+  Reports `content_excluded_px` + `belt_content_split`. `analyze_scene` passes
+  `layers.content_mask` automatically. +1 regression test (9 total).
+
 ## [0.11.001] - 2026-07-13
 
 ### Changed
