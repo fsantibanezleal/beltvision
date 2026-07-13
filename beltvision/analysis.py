@@ -23,13 +23,36 @@ from typing import Any
 import numpy as np
 
 from . import render
-from .cases.synthetic import EXTERNAL
 from .methods import analyses as ana
-from .methods._common import as_bgr
-from .methods.beltline import compute_belt_geometry
+from .methods import robust
+from .methods._common import ENVELOPE_KEYS, as_bgr
 from .methods.preprocess import apply_clahe_lab, haze_severity
 from .methods.semantic import compute_layers
 from .views import ANALYSIS_META, VIEW_LABELS, analyses_for_view, recognize_view
+
+# envelope keys owned by a beltvision method record; the rest is the inspectable payload.
+_REC_DROP = set(ENVELOPE_KEYS) | {"id"}
+
+
+def _mk_from_rec(
+    analysis_id: str, rec: dict[str, Any], status: str, summary: str,
+    *, applicable: bool = True, lane: str = "live-server", mode: str = "live",
+) -> dict[str, Any]:
+    """Build a scene-analysis entry from a beltvision method record (robust cascade).
+
+    Uses the record's already-rendered overlay data URL directly and exposes its payload
+    (found / confidence / per_pipeline / edges / centreline / ...) as the analysis metrics, so
+    the front end can show the fused result plus each pipeline's contribution.
+    """
+    meta = ANALYSIS_META.get(analysis_id, {})
+    metrics = {k: v for k, v in rec.items() if k not in _REC_DROP}
+    return {
+        "id": analysis_id, "title": meta.get("title", analysis_id),
+        "about": meta.get("about", ""), "layer": meta.get("layer", "all"),
+        "status": status, "applicable": applicable, "summary": summary,
+        "metrics": metrics, "lane": lane, "mode": mode,
+        "overlay": rec.get("overlay_b64"),
+    }
 
 
 def _mk(analysis_id: str, status: str, summary: str, metrics: dict,
@@ -77,17 +100,16 @@ def analyze_scene(
     # STAGE 3: segment once, then derive
     layers = compute_layers(bgr, view_type=used_view, use_learned=use_learned)
     belt_mask = layers.belt_mask
-    # The belt FOOTPRINT is the physical belt region: exposed belt plus whatever content
-    # rides on top of it. Geometry (axis/centreline/edges) is derived from the footprint so
-    # a loaded belt's axis is still recovered; damage/edges/surface use the exposed belt.
-    belt_footprint = belt_mask | layers.content_mask
     lane = "precompute" if use_learned else "live-server"
     mode = "precompute" if use_learned else "live"
 
-    import cv2
-
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    geo = compute_belt_geometry(belt_footprint, external_mask=layers.mask(EXTERNAL), gray=gray)
+    # ROBUST CASCADE (0.11): the belt band is estimated ONCE by the multi-pipeline detector
+    # (orientation consensus + normal-projection two-limits + Hough cross-check, centreline =
+    # midline of the limits) and threaded into damage + edge-condition. This replaces the old
+    # single mask-derived belt_geometry/damage/edges that produced trash on real frames.
+    band_rec: dict[str, Any] | None = None
+    if any(a in wanted for a in ("belt_geometry", "damage", "edges")):
+        band_rec = robust.belt_band(bgr)
 
     out: dict[str, Any] = {}
     for aid in wanted:
@@ -102,49 +124,35 @@ def analyze_scene(
                            {"engine": layers.engine, "coverage": layers.coverage,
                             "n_regions": layers.n_regions}, ov, lane=lane, mode=mode)
         elif aid == "belt_geometry":
-            ov = render.geometry_overlay(bgr, geo) if want_overlays else None
-            if geo.get("confidence") == "low":
-                if "axis_angle_deg" in geo:
-                    s = (f"Belt found: axis {geo['axis_angle_deg']:.0f}deg "
-                         f"({geo['orientation']}); region broad/ambiguous, edges + width "
-                         f"low confidence.")
-                else:
-                    s = f"Low confidence: {geo.get('reason', 'belt ambiguous')}."
-                out[aid] = _mk(aid, "low_confidence", s, geo, ov, applicable=True,
-                               lane=lane, mode=mode)
+            found = bool(band_rec.get("found"))
+            conf = band_rec.get("confidence_label", "low")
+            if found:
+                s = (f"Belt band FOUND ({conf} confidence {band_rec['confidence']:.2f}): axis "
+                     f"{band_rec['orientation_deg']:.0f}deg, width {band_rec['width_px']:.0f}px. "
+                     "Centreline is the midline of the two detected limits "
+                     f"(projection + Hough cross-check {band_rec['cross_check_agreement']*100:.0f}% agree).")
+                st = "ok"
             else:
-                s = (f"Belt axis {geo['axis_angle_deg']:.0f}deg ({geo['orientation']}), "
-                     f"width ~{geo['mean_width_px']:.0f}px, "
-                     f"{'curved' if geo.get('curved') else 'straight'}.")
-                if geo.get("misalignment_deg") is not None:
-                    s += (f" Misalignment vs support {geo['misalignment_deg']:+.1f}deg "
-                          f"({'misaligned' if geo.get('misaligned') else 'aligned'}).")
-                out[aid] = _mk(aid, "ok", s, geo, ov, lane=lane, mode=mode)
+                s = (f"Belt limits {conf} confidence ({band_rec['confidence']:.2f}) on this frame "
+                     f"(axis {band_rec['orientation_deg']:.0f}deg): best-guess candidates shown; "
+                     "refine with guided ROIs in the Studio.")
+                st = "low_confidence"
+            out[aid] = _mk_from_rec(aid, band_rec, st, s, applicable=True, lane=lane, mode=mode)
         elif aid == "damage":
-            dmg = ana.belt_damage(bgr, belt_mask)
-            ov = render.damage_overlay(bgr, dmg, belt_mask) if want_overlays else None
-            if not dmg.get("applicable"):
-                out[aid] = _mk(aid, "na", f"Not applicable: {dmg.get('reason')}.", dmg, ov,
-                               applicable=False, lane=lane, mode=mode)
-            else:
-                out[aid] = _mk(aid, "ok",
-                               f"{dmg['n_damage_regions']} damage region(s), severity "
-                               f"{dmg['severity']:.2f} ({dmg['severity_label']}).",
-                               dmg, ov, lane=lane, mode=mode)
+            dmg = robust.damage(bgr, band=band_rec)
+            s = (f"RGB anomaly ensemble inside the belt band: {dmg['n_damage_regions']} "
+                 f"region(s), severity {dmg['severity']:.2f} ({dmg['severity_label']}).")
+            if dmg.get("likely_loaded"):
+                s += " Belt likely loaded — reading limited to visible belt."
+            out[aid] = _mk_from_rec(aid, dmg, "ok", s, applicable=bool(dmg.get("applicable")),
+                                    lane=lane, mode=mode)
         elif aid == "edges":
-            if geo.get("confidence") == "low":
-                ec = {"applicable": False, "status": "na",
-                      "reason": "belt edges low confidence (region broad/ambiguous)"}
-            else:
-                ec = ana.edge_condition(belt_mask, geo.get("edge_a_xy"), geo.get("edge_b_xy"))
-            ov = render.edges_overlay(bgr, geo, ec) if want_overlays else None
+            ec = robust.edge_condition(bgr, band=band_rec)
             if not ec.get("applicable"):
-                out[aid] = _mk(aid, "na", f"Not applicable: {ec.get('reason')}.", ec, ov,
-                               applicable=False, lane=lane, mode=mode)
+                out[aid] = _mk_from_rec(aid, ec, "na", f"Not applicable: {ec.get('reason')}.",
+                                        applicable=False, lane=lane, mode=mode)
             else:
-                out[aid] = _mk(aid, "ok", ec["verdict"] +
-                               f" (roughness {ec['worst_roughness_px']:.1f}px).", ec, ov,
-                               lane=lane, mode=mode)
+                out[aid] = _mk_from_rec(aid, ec, "ok", ec["verdict"], lane=lane, mode=mode)
         elif aid == "surface":
             surf = ana.surface_state(bgr, belt_mask)
             ov = render.surface_overlay(bgr, surf) if want_overlays else None
