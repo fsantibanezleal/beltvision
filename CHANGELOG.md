@@ -6,6 +6,18 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.003] - 2026-07-13
+
+### Added
+
+- **Robust cascade exposed as Pipeline Studio ops + template.** New `robust_belt_band` and
+  `robust_damage` ops (in `pipeline_graph.OP_REGISTRY`) run the robust multi-pipeline cascade
+  interactively, honouring the drawn ROI mask (and a `content` ROI for the belt/content split).
+  New **`robust_cascade`** template (roi → robust_belt_band → robust_damage) — the target of the
+  Precomputed Analysis "Refine with guided ROIs in the Studio" deep-link: draw an ROI on the belt
+  and re-run the SAME robust analysis, with your ROI focusing/boosting the estimate (on the COLA
+  34 frame an ROI lifts the band from low to medium confidence / found).
+
 ## [0.11.002] - 2026-07-13
 
 ### Added
