@@ -17,7 +17,11 @@ from typing import Any
 import numpy as np
 
 from .cases.synthetic import CLASS_NAMES
-from .methods.semantic import CLASS_COLORS_BGR
+
+# NOTE: ``CLASS_COLORS_BGR`` lives in ``methods.semantic``; importing it at module load pulls in
+# ``methods/__init__`` (which imports ``constrained``/``robust``, and those import THIS module),
+# closing an import cycle. It is only needed inside two overlay functions, so import it lazily
+# there to keep ``render`` importable before ``methods`` finishes loading.
 
 _FONT = 0  # cv2.FONT_HERSHEY_SIMPLEX
 _WHITE = (255, 255, 255)
@@ -106,6 +110,8 @@ def _poly(pts: Any) -> np.ndarray:
 
 def semantic_overlay(bgr: np.ndarray, label_map: np.ndarray, coverage: dict, engine: str) -> np.ndarray:
     import cv2
+
+    from .methods.semantic import CLASS_COLORS_BGR
 
     img = bgr.copy()
     color = np.zeros_like(bgr)
@@ -319,6 +325,8 @@ def edges_overlay(bgr: np.ndarray, geo: dict, ec: dict) -> np.ndarray:
 
 def content_overlay(bgr: np.ndarray, content_mask: np.ndarray, content: dict) -> np.ndarray:
     import cv2
+
+    from .methods.semantic import CLASS_COLORS_BGR
 
     img = bgr.copy()
     color = np.zeros_like(bgr)

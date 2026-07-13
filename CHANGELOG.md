@@ -6,6 +6,25 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.001] - 2026-07-13
+
+### Changed
+
+- **`analyze_scene` now uses the robust cascade** for the three sections that were trash on
+  real frames: `belt_geometry` → `robust.belt_band`, `damage` → `robust.damage`, `edges` →
+  `robust.edge_condition`. The belt band is estimated ONCE and threaded into damage + edges
+  (the cascade). Each section's `metrics` now carries `per_pipeline` + `confidence` so a viewer
+  can show the fused result and each pipeline's contribution; the old mask-derived
+  `belt_geometry`/`belt_damage`/`edge_condition` (medial-axis diagonal, "0 regions",
+  `applicable:false`) are no longer wired into the scene.
+
+### Fixed
+
+- **Import cycle** `analysis → render → methods.semantic → methods/__init__ → constrained →
+  render`: `render` now imports `CLASS_COLORS_BGR` lazily inside the two overlay functions that
+  use it, so `beltvision.analysis` imports cleanly (the cycle was latent — the deploy gate only
+  exercised precomputed replay, not live `analyze_scene`).
+
 ## [0.11.000] - 2026-07-13
 
 ### Added
