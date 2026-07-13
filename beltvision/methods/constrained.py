@@ -442,12 +442,108 @@ def ransac_line_constrained_method(
     return ransac_line_constrained(be, center, band, roi_mask=roi_mask, bgr=bgr)
 
 
+def extract_belt_edges(
+    segments: list[dict[str, Any]],
+    theta_center_deg: float,
+    frame_shape: tuple[int, int] | None = None,
+) -> dict[str, Any]:
+    """Select the two belt-edge lines from a set of in-band detected segments.
+
+    Projects each segment's midpoint onto the belt normal direction, performs a 2-cluster
+    split at the point that maximises the inter-cluster gap, and returns the longest
+    representative from each cluster as *edge_a* (smaller normal position) and *edge_b*
+    (larger normal position).  Also computes the belt width in pixels and the centreline.
+
+    Compatible with both Hough segments (``support_px``) and RANSAC lines (``n_inliers``).
+    Returns ``{"found": True/False, "edge_a", "edge_b", "width_px", "centreline", ...}``.
+    """
+    if not segments:
+        return {"found": False, "reason": "no segments detected",
+                "edge_a": None, "edge_b": None, "width_px": 0.0, "centreline": None,
+                "n_segments_input": 0}
+    if len(segments) < 2:
+        return {"found": False,
+                "reason": "fewer than 2 segments detected; cannot form an edge pair",
+                "edge_a": segments[0], "edge_b": None, "width_px": 0.0, "centreline": None,
+                "n_segments_input": 1}
+
+    normal_rad = np.radians((float(theta_center_deg) + 90.0) % 180.0)
+    nv = np.array([np.cos(normal_rad), np.sin(normal_rad)], dtype=np.float64)
+    axis_rad = np.radians(float(theta_center_deg) % 180.0)
+    av = np.array([np.cos(axis_rad), np.sin(axis_rad)], dtype=np.float64)
+
+    def _pos(seg: dict[str, Any]) -> float:
+        mid = (np.array(seg["p0"], dtype=np.float64) + np.array(seg["p1"], dtype=np.float64)) / 2.0
+        return float(np.dot(mid, nv))
+
+    def _len(seg: dict[str, Any]) -> float:
+        return float(np.hypot(
+            float(seg["p1"][0]) - float(seg["p0"][0]),
+            float(seg["p1"][1]) - float(seg["p0"][1])))
+
+    pos = [_pos(s) for s in segments]
+    order = list(np.argsort(pos))
+    sorted_segs = [segments[i] for i in order]
+    sorted_pos = [pos[i] for i in order]
+
+    # 2-cluster split: try every possible split point; pick the one that maximises the
+    # inter-cluster mean gap.  Each cluster's representative is its longest segment (most
+    # edge evidence), so a cluster with many short noise lines loses to one long true edge.
+    best_gap = -1.0
+    ea: dict[str, Any] | None = None
+    eb: dict[str, Any] | None = None
+    for split in range(1, len(sorted_segs)):
+        cluster_a = sorted_segs[:split]
+        cluster_b = sorted_segs[split:]
+        gap = float(np.mean(sorted_pos[split:])) - float(np.mean(sorted_pos[:split]))
+        if gap > best_gap:
+            best_gap = gap
+            ea = max(cluster_a, key=_len)
+            eb = max(cluster_b, key=_len)
+
+    if ea is None or eb is None or best_gap < 1.0:
+        return {"found": False,
+                "reason": "all segments cluster to a single physical edge (width < 1 px)",
+                "edge_a": sorted_segs[0], "edge_b": None, "width_px": 0.0, "centreline": None,
+                "n_segments_input": len(segments)}
+
+    pos_a, pos_b = _pos(ea), _pos(eb)
+    if pos_a > pos_b:
+        ea, eb = eb, ea
+        pos_a, pos_b = pos_b, pos_a
+    width_px = pos_b - pos_a
+    centre_pos = (pos_a + pos_b) / 2.0
+    centre_pt = centre_pos * nv
+
+    centreline: dict[str, Any] | None = None
+    if frame_shape is not None:
+        h_f, w_f = int(frame_shape[0]), int(frame_shape[1])
+        diag = float(np.hypot(h_f, w_f))
+        cp0 = centre_pt - diag * av
+        cp1 = centre_pt + diag * av
+        centreline = {
+            "p0": [round(float(cp0[0]), 1), round(float(cp0[1]), 1)],
+            "p1": [round(float(cp1[0]), 1), round(float(cp1[1]), 1)],
+        }
+
+    return {
+        "found": True,
+        "edge_a": ea,
+        "edge_b": eb,
+        "width_px": round(width_px, 1),
+        "centre_normal_pos": round(centre_pos, 1),
+        "centreline": centreline,
+        "n_segments_input": len(segments),
+    }
+
+
 __all__ = [
     "FAM_CONSTRAINED",
     "preprocess_for_lines",
     "gradient_orientation_gate",
     "hough_constrained",
     "ransac_line_constrained",
+    "extract_belt_edges",
     "hough_constrained_method",
     "ransac_line_constrained_method",
 ]

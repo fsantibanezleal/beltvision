@@ -14,10 +14,9 @@ to the most recent tagged release.
 
 Please do not open a public issue for a security vulnerability.
 
-Report it privately by email to felipe.santibanez@accenture.com, or use GitHub's
-private "Report a vulnerability" flow under the repository Security tab. Include a
-description, reproduction steps, affected version, and any relevant logs or a proof of
-concept.
+Report it using GitHub's private "Report a vulnerability" flow under the repository
+Security tab. Include a description, reproduction steps, affected version, and any
+relevant logs or a proof of concept.
 
 You can expect an acknowledgement within a few business days and a coordinated
 disclosure once a fix is available.

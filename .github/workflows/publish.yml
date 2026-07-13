@@ -1,0 +1,36 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"   # v0.9.0, v1.0.0, ...
+
+jobs:
+  build-and-publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/beltvision
+    permissions:
+      id-token: write  # OIDC Trusted Publishing — no long-lived token stored anywhere
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No token needed — OIDC trust configured on pypi.org for this repo + environment.
+        # Setup: pypi.org → Your account → Publishing → Add a new pending publisher
+        #   Owner: fsantibanezleal  Repo: beltvision  Workflow: publish.yml  Env: pypi
