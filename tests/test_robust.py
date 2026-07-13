@@ -90,6 +90,18 @@ def test_damage_runs_inside_band_with_per_pipeline_and_honest_note(vertical_belt
     assert "RGB-only" in rec["note"]  # states the anomaly limitation honestly
 
 
+def test_damage_belt_content_split_excludes_content(vertical_belt):
+    # a content mask over part of the band must be EXCLUDED (damage read on exposed belt only).
+    band = robust.belt_band(vertical_belt)
+    h, w = vertical_belt.shape[:2]
+    content = np.zeros((h, w), dtype=bool)
+    content[:, w // 2:] = True  # right half is "content"
+    plain = robust.damage(vertical_belt, band=band)
+    split = robust.damage(vertical_belt, band=band, content_mask=content)
+    assert split["belt_content_split"] is True and split["content_excluded_px"] > 0
+    assert split["band_area_px"] <= plain["band_area_px"]  # content removed from the band
+
+
 # --- edge_condition: consumes validated limits; gates honestly --------------------------
 def test_edge_condition_gates_when_band_low_confidence():
     # a flat/near-empty frame -> no confident band -> edge_condition must say n/a, not invent.

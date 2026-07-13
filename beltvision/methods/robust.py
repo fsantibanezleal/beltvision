@@ -397,13 +397,19 @@ def _norm01_in(x: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def damage(image: Any, *, band: dict | None = None, **_: Any) -> dict[str, Any]:
+def damage(image: Any, *, band: dict | None = None,
+           content_mask: np.ndarray | None = None, **_: Any) -> dict[str, Any]:
     """Damage as an RGB-ANOMALY ensemble INSIDE the validated belt band (honest: no laser/depth).
 
     Runs four complementary anomaly pipelines — illumination residual, wavelet texture-removal
     residual, FFT band-stop residual, morphological black/top-hat — each restricted to the belt
     band, normalises them inside the band, and FUSES to one heatmap + flagged regions. Reports
     each pipeline's contribution and states the RGB-only anomaly limitation honestly.
+
+    Cascade: when a ``content_mask`` (from the semantic layer) is given, the transported material
+    is EXCLUDED from the band so damage is read on the exposed belt only — the ore/coal texture is
+    not mistaken for belt defects (the belt-vs-content point). Each pipeline's mean response inside
+    the belt is reported in ``per_pipeline`` for inspection.
     """
     import cv2
 
@@ -417,6 +423,13 @@ def damage(image: Any, *, band: dict | None = None, **_: Any) -> dict[str, Any]:
             band = belt_band(bgr)
         mask = (band_mask_from_edges((h, w), band["edge_a"], band["edge_b"])
                 if band.get("edge_a") else np.ones((h, w), bool))
+        # belt/content split: exclude the transported material so damage reads the exposed belt.
+        content_excluded_px = 0
+        if content_mask is not None:
+            cm = np.asarray(content_mask) > 0
+            if cm.shape == mask.shape:
+                content_excluded_px = int((mask & cm).sum())
+                mask = mask & ~cm
         band_area = int(mask.sum())
         confident_band = bool(band.get("found"))
 
@@ -484,9 +497,11 @@ def damage(image: Any, *, band: dict | None = None, **_: Any) -> dict[str, Any]:
         cv2.rectangle(img, (x, y), (x + bw, y + bh), (60, 60, 240), 2, cv2.LINE_AA)
     draw_legend(img, [((40, 120, 240), "fused anomaly heatmap"), ((60, 60, 240), "flagged region")])
     band_note = "" if confident_band else " (belt band low-confidence — heatmap shown in best-guess band)"
-    draw_summary(img, f"Damage = RGB anomaly ENSEMBLE inside the belt band (illum+wavelet+FFT+"
+    split_note = (f" Content ({content_excluded_px} px) excluded — reading exposed belt only."
+                  if content_excluded_px > 0 else "")
+    draw_summary(img, f"Damage = RGB anomaly ENSEMBLE on the exposed belt (illum+wavelet+FFT+"
                       f"morph): {len(regions)} region(s), severity {sev_label} ({severity:.2f})"
-                      f"{band_note}. RGB-only anomaly — no laser/depth ground truth.")
+                      f"{band_note}.{split_note} RGB-only anomaly — no laser/depth ground truth.")
 
     payload = {
         "name": "Robust belt damage (anomaly ensemble)", "family": FAM_ROBUST,
@@ -495,6 +510,7 @@ def damage(image: Any, *, band: dict | None = None, **_: Any) -> dict[str, Any]:
         "damaged_frac_of_band": round(damaged_frac, 4), "n_damage_regions": len(regions),
         "regions": regions[:24], "severity": round(severity, 3), "severity_label": sev_label,
         "per_pipeline": per_pipeline,
+        "content_excluded_px": content_excluded_px, "belt_content_split": content_excluded_px > 0,
         "textured_frac": round(textured_frac, 3), "likely_loaded": likely_loaded,
         "note": ("RGB-only anomaly detection (no laser-stripe / depth / labelled defects); "
                  "confidence is bounded — corroborate high-severity flags visually."
