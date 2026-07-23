@@ -11,6 +11,7 @@ measured live/precompute lane gate, and a validated artifact manifest.
 [![License](https://img.shields.io/github/license/fsantibanezleal/beltvision.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/fsantibanezleal/beltvision.svg?label=version&sort=semver)](https://github.com/fsantibanezleal/beltvision/tags)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21519891-blue)](https://doi.org/10.5281/zenodo.21519891)
 
 The PyPI badge goes live on the first published release. Until the API stabilizes,
 install from a git tag ref (see Install).
