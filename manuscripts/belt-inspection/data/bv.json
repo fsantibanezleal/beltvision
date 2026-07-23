@@ -1,0 +1,181 @@
+{
+  "schema": "beltvision-gt-benchmark/1.0",
+  "task": "classical geometry+semantic recovery on the synthetic GT suite (use_learned=False)",
+  "note": "Synthetic scenes with EXACT known geometry; no data downloaded, nothing fabricated. Measures how the training-free classical chain recovers belt mask, axis orientation, centreline and injected misalignment across orientations and a curved path.",
+  "package_version": "0.11.3",
+  "scenes": [
+    {
+      "name": "vertical_empty",
+      "orientation_gt_deg": 90.0,
+      "loaded": false,
+      "curved": false,
+      "axis_angle_deg": 89.97,
+      "orientation_label": null,
+      "confidence": "medium",
+      "belt_iou": 0.82,
+      "ori_err_deg": 0.03,
+      "class_iou": {
+        "external": 0.858,
+        "belt": 0.82
+      },
+      "misalign_gt_deg": -0.0,
+      "misalign_det_deg": null,
+      "misalign_err_deg": null,
+      "centreline_rmse_px": 1.0,
+      "belt_width_px": 156.0,
+      "cpu_ms": 159.6,
+      "size": [
+        300,
+        400
+      ]
+    },
+    {
+      "name": "horizontal_loaded",
+      "orientation_gt_deg": 2.0,
+      "loaded": true,
+      "curved": false,
+      "axis_angle_deg": 1.78,
+      "orientation_label": null,
+      "confidence": "high",
+      "belt_iou": 0.786,
+      "ori_err_deg": 0.22,
+      "class_iou": {
+        "external": 0.772,
+        "belt": 0.256,
+        "content": 0.97,
+        "foreign": 0.0
+      },
+      "misalign_gt_deg": -0.0,
+      "misalign_det_deg": null,
+      "misalign_err_deg": null,
+      "centreline_rmse_px": 16.12,
+      "belt_width_px": 156.0,
+      "cpu_ms": 52.2,
+      "size": [
+        300,
+        400
+      ]
+    },
+    {
+      "name": "diag30_loaded",
+      "orientation_gt_deg": 30.0,
+      "loaded": true,
+      "curved": false,
+      "axis_angle_deg": 29.77,
+      "orientation_label": null,
+      "confidence": "high",
+      "belt_iou": 0.803,
+      "ori_err_deg": 0.23,
+      "class_iou": {
+        "external": 0.76,
+        "belt": 0.248,
+        "content": 0.974,
+        "foreign": 0.0
+      },
+      "misalign_gt_deg": -0.0,
+      "misalign_det_deg": null,
+      "misalign_err_deg": null,
+      "centreline_rmse_px": 13.32,
+      "belt_width_px": 156.0,
+      "cpu_ms": 52.1,
+      "size": [
+        300,
+        400
+      ]
+    },
+    {
+      "name": "diag45_empty",
+      "orientation_gt_deg": 45.0,
+      "loaded": false,
+      "curved": false,
+      "axis_angle_deg": 37.52,
+      "orientation_label": null,
+      "confidence": "high",
+      "belt_iou": 0.844,
+      "ori_err_deg": 7.48,
+      "class_iou": {
+        "external": 0.809,
+        "belt": 0.844
+      },
+      "misalign_gt_deg": -0.0,
+      "misalign_det_deg": -7.48,
+      "misalign_err_deg": 7.48,
+      "centreline_rmse_px": 30.93,
+      "belt_width_px": 156.0,
+      "cpu_ms": 55.6,
+      "size": [
+        300,
+        400
+      ]
+    },
+    {
+      "name": "curved_loaded",
+      "orientation_gt_deg": 75.0,
+      "loaded": true,
+      "curved": true,
+      "axis_angle_deg": 69.89,
+      "orientation_label": null,
+      "confidence": "medium",
+      "belt_iou": 0.742,
+      "ori_err_deg": 5.11,
+      "class_iou": {
+        "external": 0.801,
+        "belt": 0.274,
+        "content": 0.925
+      },
+      "misalign_gt_deg": -0.0,
+      "misalign_det_deg": -7.12,
+      "misalign_err_deg": 7.12,
+      "centreline_rmse_px": null,
+      "belt_width_px": 156.0,
+      "cpu_ms": 54.0,
+      "size": [
+        300,
+        400
+      ]
+    },
+    {
+      "name": "misaligned_side",
+      "orientation_gt_deg": 88.0,
+      "loaded": false,
+      "curved": false,
+      "axis_angle_deg": 90.2,
+      "orientation_label": null,
+      "confidence": "medium",
+      "belt_iou": 0.848,
+      "ori_err_deg": 2.2,
+      "class_iou": {
+        "external": 0.885,
+        "belt": 0.848
+      },
+      "misalign_gt_deg": -9.0,
+      "misalign_det_deg": -7.47,
+      "misalign_err_deg": 1.53,
+      "centreline_rmse_px": 3.67,
+      "belt_width_px": 156.0,
+      "cpu_ms": 53.5,
+      "size": [
+        300,
+        400
+      ]
+    }
+  ],
+  "summary": {
+    "n_scenes": 6,
+    "orientation_span_deg": [
+      2.0,
+      30.0,
+      45.0,
+      75.0,
+      88.0,
+      90.0
+    ],
+    "belt_iou_mean": 0.807,
+    "belt_iou_min": 0.742,
+    "ori_err_mean_deg": 2.54,
+    "ori_err_max_deg": 7.48,
+    "misalign_err_max_deg": 7.48,
+    "cpu_ms_mean": 71.2,
+    "cpu_ms_max": 159.6
+  }
+}
