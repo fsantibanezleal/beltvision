@@ -6,6 +6,18 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.006] - 2026-07-13
+
+### Added
+
+- **Beyond-SOTA methods wired PERMANENTLY into the benchmark** (`compute_benchmark(foundation=True,
+  device=...)` + `run_precompute(beyond_sota=True)` + `python -m beltvision.precompute --beyond-sota
+  --device cuda`). `_foundation_methods` evaluates **DINOv2-kNN** (AnomalyDINO: L2-normalised DINOv2
+  ViT-B/14 patch features + PatchCore kNN to a normal bank) and **OWLv2** open-vocab foreign-object
+  detection on the same held-out split, appending schema-matched entries + a full ranking note. The
+  foundation methods are GPU-gated (the classical/SOTA benchmark still runs on CPU without them), so the
+  beyond-SOTA result is now reproducible from source, not a one-off script.
+
 ## [0.11.005] - 2026-07-13
 
 ### Fixed / Added
