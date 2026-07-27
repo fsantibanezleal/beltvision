@@ -129,90 +129,150 @@ def _prominent_peaks(profile: np.ndarray, margin: int, max_peaks: int = 8) -> li
     return peaks[:max_peaks]
 
 
-def _project_limits(
-    gray: np.ndarray, angle_deg: float, roi_mask: np.ndarray | None = None,
-    min_width_frac: float = 0.08, max_width_frac: float = 0.95,
-) -> dict[str, Any]:
-    """Two belt limits as the dominant opposite-polarity peaks of the normal-projected gradient.
-
-    Projects the signed gradient component along the belt normal into 1-D bins over the normal
-    offset ``s = p . normal``. A belt band has two parallel step edges of OPPOSITE polarity, so
-    the signed profile has a strong +peak at one limit and a strong -peak at the other. Returns
-    the two limit lines, the centreline (their midline), width, and a prominence confidence.
-    """
+def _sobel(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     import cv2
 
+    g = gray.astype(np.float32)
+    return (cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3))
+
+
+def _project_at(
+    gx: np.ndarray, gy: np.ndarray, gray: np.ndarray, angle_deg: float,
+    roi_mask: np.ndarray | None = None,
+    min_width_frac: float = 0.06, max_width_frac: float = 0.9,
+) -> dict[str, Any]:
+    """Two belt limits from the normal-projected signed gradient, for a GIVEN orientation.
+
+    A belt band has TWO parallel step edges of OPPOSITE polarity, so projecting the signed
+    gradient onto the belt normal gives a 1-D profile with a strong +peak at one limit and a
+    strong -peak at the other. Among the enclosed candidate pairs, prefer the one whose interior
+    is the most HOMOGENEOUS (low gradient energy) — the belt surface is smoother than the rocky
+    background or the support beams, which rejects beam/background pairs that over-widen the band.
+    Returns the limit lines + width + a ``score`` used to pick the orientation in the sweep.
+    """
     h, w = gray.shape[:2]
     axis, normal = _normal_unit(angle_deg)
-    gx = cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3)
-    g_n = gx * normal[0] + gy * normal[1]  # signed gradient along the normal
+    g_n = gx * normal[0] + gy * normal[1]           # signed gradient along the normal
+    g_mag = np.abs(gx) + np.abs(gy)                  # gradient energy (for interior homogeneity)
 
     ys, xs = np.mgrid[0:h, 0:w]
-    s = xs * normal[0] + ys * normal[1]  # normal offset per pixel
+    s_full = xs * normal[0] + ys * normal[1]
     if roi_mask is not None:
         m = np.asarray(roi_mask) > 0
-        g_n = g_n[m]
-        s = s[m]
+        gn, sm, gm = g_n[m], s_full[m], g_mag[m]
     else:
-        g_n = g_n.ravel()
-        s = s.ravel()
+        gn, sm, gm = g_n.ravel(), s_full.ravel(), g_mag.ravel()
 
-    s_min, s_max = float(s.min()), float(s.max())
+    s_min, s_max = float(sm.min()), float(sm.max())
     nbins = max(64, int(s_max - s_min))
     bins = np.linspace(s_min, s_max, nbins + 1)
-    idx = np.clip(np.digitize(s, bins) - 1, 0, nbins - 1)
+    idx = np.clip(np.digitize(sm, bins) - 1, 0, nbins - 1)
     signed = np.zeros(nbins, dtype=np.float64)
-    np.add.at(signed, idx, g_n)
+    energy = np.zeros(nbins, dtype=np.float64)
+    counts = np.zeros(nbins, dtype=np.float64)
+    np.add.at(signed, idx, gn)
+    np.add.at(energy, idx, gm)
+    np.add.at(counts, idx, 1.0)
     centers = 0.5 * (bins[:-1] + bins[1:])
-    # smooth the profile (Gaussian, ~2 bins) to suppress speckle
-    k = np.exp(-0.5 * (np.arange(-4, 5) / 2.0) ** 2)
-    k /= k.sum()
-    prof = np.convolve(signed, k, mode="same")
+    k = np.exp(-0.5 * (np.arange(-4, 5) / 2.0) ** 2)  # sigma~2 bins: stable peaks (a sharper
+    k /= k.sum()                                       # kernel picks streak/weave noise on
+    prof = np.convolve(signed, k, mode="same")         # empty belts)
+    energy_density = energy / np.maximum(counts, 1.0)       # mean gradient energy per bin
 
     span = s_max - s_min
-    min_sep = max(4.0, min_width_frac * span)
-    max_sep = max_width_frac * span
-
-    # A belt band has TWO parallel step edges of OPPOSITE polarity. Pick the best-separated
-    # opposite-polarity PAIR among prominent peaks — not the global argmax/argmin, which can
-    # both land on one narrow high-contrast feature (e.g. a dark post). Exclude a border margin.
+    min_sep, max_sep = max(4.0, min_width_frac * span), max_width_frac * span
     margin = max(2, int(0.03 * nbins))
-    pos_peaks = _prominent_peaks(prof, margin)              # +gradient edges
-    neg_peaks = _prominent_peaks(-prof, margin)             # -gradient edges
+    pos_peaks = _prominent_peaks(prof, margin)
+    neg_peaks = _prominent_peaks(-prof, margin)
     scale = float(np.percentile(np.abs(prof), 95)) + 1e-6
-    best = None  # (score, s_pos, s_neg, prom)
+    interior_scale = float(np.percentile(energy_density, 90)) + 1e-6
+
+    best = None  # (score, s_pos, s_neg, edge_strength)
     for pi in pos_peaks:
         for ni in neg_peaks:
             sep = abs(centers[pi] - centers[ni])
             if not (min_sep <= sep <= max_sep):
                 continue
-            strength = min(float(prof[pi]), float(-prof[ni]))  # BOTH edges must be strong
-            if strength <= 0:
+            edge_strength = min(float(prof[pi]), float(-prof[ni]))
+            if edge_strength <= 0:
                 continue
-            if best is None or strength > best[0]:
-                best = (strength, float(centers[pi]), float(centers[ni]), strength / scale)
+            lo, hi = sorted([pi, ni])
+            interior = float(energy_density[lo + 1:hi].mean()) if hi - lo > 2 else interior_scale
+            # smooth interior (belt) -> low energy -> high homogeneity bonus in [0.4, 1.4]
+            homogeneity = float(np.clip(1.4 - interior / interior_scale, 0.4, 1.4))
+            # interior-edge penalty: a clean belt band has NO strong signed-gradient peak between
+            # its two limits. A wider pair that ENCLOSES the real belt edges (e.g. two support
+            # beams bracketing the belt) has strong interior peaks -> reject it. This removes the
+            # ~+17% width bias from beams and prefers the true belt-edge pair.
+            inner = np.abs(prof[lo + 1:hi]) if hi - lo > 2 else np.array([0.0])
+            inner_max = float(inner.max()) if inner.size else 0.0
+            clean = float(np.clip(1.0 - inner_max / (edge_strength + 1e-6), 0.2, 1.0))
+            score = edge_strength * homogeneity * clean
+            if best is None or score > best[0]:
+                best = (score, float(centers[pi]), float(centers[ni]), edge_strength)
+
     if best is not None:
-        _str, s_pos, s_neg, prom = best
+        score, s_pos, s_neg, edge_strength = best
         width_ok = True
-    else:  # no valid opposite-polarity pair -> fall back to global extrema (honest low conf)
+    else:
         pos_i, neg_i = int(np.argmax(prof)), int(np.argmin(prof))
         s_pos, s_neg = float(centers[pos_i]), float(centers[neg_i])
-        prom = min(abs(prof[pos_i]), abs(prof[neg_i])) / scale
+        edge_strength = min(abs(prof[pos_i]), abs(prof[neg_i]))
+        score = 0.0
         width_ok = min_sep <= abs(s_pos - s_neg) <= max_sep
+    prom = edge_strength / scale
     sep = abs(s_pos - s_neg)
     confidence = float(np.clip((prom - 1.0) / 3.0, 0.0, 1.0)) * (1.0 if width_ok else 0.25)
 
     s_a, s_b = sorted([s_pos, s_neg])
-    edge_a = _offset_to_line(s_a, normal, axis, (h, w))
-    edge_b = _offset_to_line(s_b, normal, axis, (h, w))
-    centre = _offset_to_line((s_a + s_b) / 2.0, normal, axis, (h, w))
     return {
-        "edge_a": edge_a, "edge_b": edge_b, "centreline": centre,
+        "edge_a": _offset_to_line(s_a, normal, axis, (h, w)),
+        "edge_b": _offset_to_line(s_b, normal, axis, (h, w)),
+        "centreline": _offset_to_line((s_a + s_b) / 2.0, normal, axis, (h, w)),
         "width_px": round(sep, 1), "confidence": round(confidence, 3),
-        "width_ok": bool(width_ok),
-        "offsets": [round(s_a, 1), round(s_b, 1)],
+        "width_ok": bool(width_ok), "offsets": [round(s_a, 1), round(s_b, 1)],
+        "score": float(score),
     }
+
+
+def _sweep_orientation(
+    gray: np.ndarray, roi_mask: np.ndarray | None, prior_deg: float | None,
+) -> tuple[float, dict[str, Any]]:
+    """Find the belt orientation by MAXIMISING the two-parallel-edge band score over a θ sweep.
+
+    Global texture estimators (Radon/FFT/structure-tensor) misfire when the belt is not the
+    dominant structure (e.g. an empty return strand amid rocky background), flipping ~90deg.
+    The belt's DEFINING feature is two parallel opposite-polarity edges bounding a homogeneous
+    band; scoring each candidate orientation by that signature recovers the true axis robustly.
+    ``prior_deg`` (the consensus) only breaks near-ties. Coarse 6deg sweep, then ±5deg refine.
+    """
+    gx, gy = _sobel(gray)
+
+    def _scored(theta: float) -> dict[str, Any]:
+        p = _project_at(gx, gy, gray, theta, roi_mask=roi_mask)
+        s = p["score"]
+        if prior_deg is not None:  # tiny prior bonus (<=6%) to break ties toward the consensus
+            s *= 1.0 + 0.06 * (1.0 - min(_ang_diff(theta, prior_deg) / 90.0, 1.0))
+        p["_rank"] = s
+        return p
+
+    coarse = [(t, _scored(float(t))) for t in range(0, 180, 6)]
+    best_t, best_p = max(coarse, key=lambda kv: kv[1]["_rank"])
+    for t in range(int(best_t) - 5, int(best_t) + 6):
+        p = _scored(float(t % 180))
+        if p["_rank"] > best_p["_rank"]:
+            best_t, best_p = float(t % 180), p
+    best_p.pop("_rank", None)
+    return float(best_t) % 180.0, best_p
+
+
+def _project_limits(
+    gray: np.ndarray, angle_deg: float, roi_mask: np.ndarray | None = None,
+    min_width_frac: float = 0.06, max_width_frac: float = 0.9,
+) -> dict[str, Any]:
+    """Backward-compatible wrapper: compute gradients then project at a fixed orientation."""
+    gx, gy = _sobel(gray)
+    return _project_at(gx, gy, gray, angle_deg, roi_mask, min_width_frac, max_width_frac)
 
 
 def _hough_limits(bgr: np.ndarray, angle_deg: float, band_deg: float,
@@ -266,11 +326,13 @@ def belt_band(
     gray = _clahe_gray(bgr)
     h, w = gray.shape[:2]
     with timed() as t:
+        # orientation comes from the BAND STRUCTURE (a θ sweep maximising the two-parallel-edge
+        # signature), NOT global texture — the consensus is only a tie-break prior. This fixes
+        # the ~90deg flip on empty belts where the belt is not the dominant scene texture.
         ori = orientation_consensus(gray)
-        angle = ori["angle_deg"]
+        angle, proj = _sweep_orientation(gray, roi_mask, prior_deg=ori["angle_deg"])
         _axis, normal = _normal_unit(angle)
 
-        proj = _project_limits(gray, angle, roi_mask=roi_mask)
         hough = _hough_limits(bgr, angle, band_deg, roi_mask)
 
         # fuse: projection is the primary limit estimate; Hough is the cross-check. Agreement =
