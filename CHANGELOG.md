@@ -6,6 +6,22 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.005] - 2026-07-13
+
+### Fixed / Added
+
+- **Real-frame robustness for the auto belt band.** On the GT synthetics the sweep works (belt =
+  dominant band), but on a REAL cluttered industrial frame the strongest parallel band can be the
+  horizon / machinery / floor lines, not the belt — the detector could be confidently wrong.
+  Two mitigations: (1) a **centrality prior** in the band score (a band hugging a frame edge, e.g.
+  the horizon, is down-weighted; GT stays 20/20 and the oblique gravel frame now honestly reads
+  low-confidence instead of reporting the horizon); (2) `analyze_scene` now **constrains the
+  robust geometry to the LEARNED belt region** (segmenter mask, dilated) so the sweep/projection
+  cannot escape onto machinery — uniting "where is the belt" (learned) with "precise straight
+  limits + midline centreline" (classical). Falls back to the whole frame when the mask is
+  absent/degenerate. NOTE: real-frame accuracy is bounded by the belt segmenter's quality; the
+  Studio guided-ROI path remains the reliable route on hard real frames.
+
 ## [0.11.004] - 2026-07-13
 
 ### Fixed

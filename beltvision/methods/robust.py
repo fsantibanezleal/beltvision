@@ -186,6 +186,7 @@ def _project_at(
     neg_peaks = _prominent_peaks(-prof, margin)
     scale = float(np.percentile(np.abs(prof), 95)) + 1e-6
     interior_scale = float(np.percentile(energy_density, 90)) + 1e-6
+    frame_centre_off = (w * 0.5) * normal[0] + (h * 0.5) * normal[1]  # for a centrality prior
 
     best = None  # (score, s_pos, s_neg, edge_strength)
     for pi in pos_peaks:
@@ -207,7 +208,14 @@ def _project_at(
             inner = np.abs(prof[lo + 1:hi]) if hi - lo > 2 else np.array([0.0])
             inner_max = float(inner.max()) if inner.size else 0.0
             clean = float(np.clip(1.0 - inner_max / (edge_strength + 1e-6), 0.2, 1.0))
-            score = edge_strength * homogeneity * clean
+            # centrality prior: the belt usually spans a central region, not a thin band hugging
+            # a frame edge (e.g. the HORIZON on a real oblique frame). Mild bonus for a band whose
+            # centre sits near the frame centre (never a hard reject — an off-centre belt still
+            # scores, just lower). Keeps the central synthetic belts and rejects the horizon.
+            band_centre = 0.5 * (centers[pi] + centers[ni])
+            centrality = float(np.clip(1.25 - abs(band_centre - frame_centre_off) / (0.4 * span),
+                                       0.55, 1.25))
+            score = edge_strength * homogeneity * clean * centrality
             if best is None or score > best[0]:
                 best = (score, float(centers[pi]), float(centers[ni]), edge_strength)
 
