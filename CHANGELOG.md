@@ -6,6 +6,29 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.004] - 2026-07-13
+
+### Fixed
+
+- **Belt orientation was WRONG on empty belts (adversarial GT validation).** Validated the
+  robust `belt_band` against synthetic scenes with EXACT ground truth (orientation/width/
+  centreline) across vertical/horizontal/diagonal/curved/misaligned, loaded and empty — it
+  scored only **8/20**: on empty belts the global-texture orientation (Radon/FFT/structure-
+  tensor consensus) flipped ~90deg because the belt is not the dominant scene texture. Replaced
+  it with `_sweep_orientation`: the belt axis is now found by MAXIMISING the two-parallel-
+  opposite-polarity-edge band signature over a θ sweep (the consensus is only a tie-break prior).
+  Straight belts now recover orientation to **~1deg**; the suite passes **20/20** (orientation
+  10deg / width 30% / centre 15%; the 10deg budget covers only a curved belt and a support beam
+  nearly parallel to the belt). Added an interior-edge penalty (reject a band that encloses the
+  real belt edges, e.g. bracketing support beams).
+
+### Added
+
+- **`tests/test_gt_geometry.py` — a BLOCKING ground-truth gate.** The pipeline must recover known
+  synthetic geometry within tolerance across orientations + loaded/empty, or the build fails
+  (per the wip's synthetic-GT rule). Plus a tight ≤4deg straight-belt check and a damage-responds-
+  to-injected-damage check.
+
 ## [0.11.003] - 2026-07-13
 
 ### Added
