@@ -69,8 +69,14 @@ def run_precompute(
     sel_dims: int = 100,
     coreset_size: int = 1024,
     work_long_side: int = 512,
+    beyond_sota: bool = False,
+    device: str = "cpu",
 ) -> dict[str, Any]:
-    """Run the full precompute lane: train + fit + export + benchmark. Returns a summary."""
+    """Run the full precompute lane: train + fit + export + benchmark. Returns a summary.
+
+    ``beyond_sota`` additionally evaluates the foundation methods (DINOv2-kNN, OWLv2) on the same
+    held-out split — needs a GPU + the ``[gpu]`` extra; ``device`` selects it (e.g. ``"cuda"``).
+    """
     data_dir = Path(data_dir)
     models_out = Path(models_out)
     bench_out = Path(bench_out)
@@ -118,6 +124,8 @@ def run_precompute(
         work_long_side=work_long_side,
         input_size=input_size,
         dataset_meta=dataset_meta,
+        foundation=beyond_sota,
+        device=device,
         conv_ae_meta={
             "epochs": conv_meta["epochs"],
             "n_train": conv_meta["n_train"],

@@ -55,6 +55,86 @@ def _ms_stats(times: list[float]) -> dict[str, float]:
     }
 
 
+_OWLV2_FOREIGN_PROMPTS = [
+    "a metal tool", "a wrench", "a piece of wood", "a wooden plank", "a rock",
+    "debris", "a foreign object", "a bolt or nut", "a tool on the conveyor belt",
+]
+
+
+def _foundation_methods(
+    train_norms: list[np.ndarray], clean: list[np.ndarray], dust: list[np.ndarray],
+    labels: np.ndarray, device: str, work_long_side: int,
+) -> list[dict[str, Any]]:
+    """Beyond-SOTA foundation anomaly/detection scored on the held-out split (GPU precompute).
+
+    - ``dinov2_knn`` (AnomalyDINO): max NN cosine distance of L2-normalised DINOv2 patch features
+      to a memory bank of NORMAL patches (the PatchCore rule on foundation features).
+    - ``owlv2_foreign``: max OWLv2 open-vocabulary detection confidence over foreign-object text
+      prompts, as an image-level score (a targeted detector, not a general anomaly model).
+    """
+    import torch
+
+    from ..methods.foundation import _cap_long_side, _dinov2_grid, _load_owlv2, _to_pil
+
+    rng = np.random.default_rng(34)
+
+    def _dfeat(bgr: np.ndarray) -> np.ndarray:
+        g, _gh, _gw = _dinov2_grid(bgr, device, side=308)
+        f = g.reshape(-1, g.shape[-1]).astype(np.float32)
+        return f / (np.linalg.norm(f, axis=1, keepdims=True) + 1e-6)
+
+    bank = np.concatenate([_dfeat(t) for t in train_norms], axis=0)
+    if bank.shape[0] > 12000:
+        bank = bank[rng.choice(bank.shape[0], 12000, replace=False)]
+
+    def _dinov2_knn(bgr: np.ndarray) -> float:
+        return patchcore_score_from_features(_dfeat(bgr), coreset=bank)
+
+    def _owlv2_foreign(bgr: np.ndarray) -> float:
+        proc, model = _load_owlv2(device)
+        pil = _to_pil(_cap_long_side(bgr, 840))
+        inputs = proc(text=[_OWLV2_FOREIGN_PROMPTS], images=pil, return_tensors="pt").to(device)
+        with torch.no_grad():
+            out = model(**inputs)
+        tgt = torch.tensor([[pil.size[1], pil.size[0]]], device=device)
+        res = proc.post_process_grounded_object_detection(
+            outputs=out, target_sizes=tgt, threshold=0.0, text_labels=[_OWLV2_FOREIGN_PROMPTS])[0]
+        s = res["scores"].cpu().numpy()
+        return float(s.max()) if s.size else 0.0
+
+    plan = [
+        ("dinov2_knn", _dinov2_knn,
+         "DINOv2-kNN (AnomalyDINO / foundation-feature PatchCore)",
+         "DINOv2 (Oquab 2023) patch features + PatchCore kNN (Roth 2022); AnomalyDINO (Damm 2024)",
+         "max NN cosine distance to the normal DINOv2 (ViT-B/14) bank"),
+        ("owlv2_foreign", _owlv2_foreign,
+         "OWLv2 open-vocab foreign-object detection",
+         "OWLv2 (Minderer 2023) open-vocabulary detection; max score over foreign-object prompts",
+         "max OWLv2 detection confidence over foreign-object text prompts"),
+    ]
+    out: list[dict[str, Any]] = []
+    for mid, fn, label, ref, sem in plan:
+        cs = [fn(c) for c in clean]
+        ds = [fn(d) for d in dust]
+        auroc, ap = _auroc_ap(labels, cs)
+        d_auroc, _ = _auroc_ap(labels, ds)
+        out.append({
+            "id": mid, "label": label, "family": "foundation", "reference": ref,
+            "artifact": None, "declared_lane": "precompute", "score_semantics": sem,
+            "image_auroc": round(auroc, 4), "average_precision": round(ap, 4),
+            "robustness": {
+                "perturbation": "synthetic dust/haze (atmospheric blend + blur + noise)",
+                "dust_image_auroc": round(d_auroc, 4), "auroc_drop": round(auroc - d_auroc, 4),
+            },
+            "cost": {
+                "model_bytes": 0,
+                "lane_note": "beyond-SOTA foundation backbone on the GPU precompute lane (replayed, not live CPU)",
+                "work_long_side_px": int(work_long_side),
+            },
+        })
+    return out
+
+
 def compute_benchmark(
     split: Split,
     *,
@@ -70,8 +150,16 @@ def compute_benchmark(
     input_size: int = 256,
     dataset_meta: dict[str, Any] | None = None,
     conv_ae_meta: dict[str, Any] | None = None,
+    foundation: bool = False,
+    device: str = "cpu",
 ) -> dict[str, Any]:
-    """Score every method on the held-out split and assemble the benchmark JSON payload."""
+    """Score every method on the held-out split and assemble the benchmark JSON payload.
+
+    When ``foundation`` is set (GPU precompute lane), the beyond-SOTA foundation methods are
+    ALSO evaluated on the same split and appended: DINOv2-kNN (AnomalyDINO) and OWLv2 open-vocab
+    foreign-object detection. They are gated because they need the heavy foundation backbones on
+    a GPU; the classical/SOTA benchmark runs without them.
+    """
     labels = split.labels
     heldout = split.heldout
     train_norms = [_downscale(f.bgr, work_long_side) for f in split.train_normal]
@@ -189,16 +277,26 @@ def compute_benchmark(
             }
         )
 
-    # Best (by held-out AUROC) among learned vs the classical baseline, reported honestly.
+    # beyond-SOTA foundation methods (GPU-gated): appended on the same held-out split.
+    if foundation:
+        methods_out.extend(
+            _foundation_methods(train_norms, clean, dust, labels, device, work_long_side)
+        )
+
+    # Best (by held-out AUROC) among non-classical methods vs the classical baseline, honest.
     classical = next(m for m in methods_out if m["family"] == "classical")
     learned = [m for m in methods_out if m["family"] != "classical"]
     best_learned = max(learned, key=lambda m: m["image_auroc"])
+    ranking = " > ".join(
+        f"{m['id']} {m['image_auroc']:.3f}"
+        for m in sorted(methods_out, key=lambda m: m["image_auroc"], reverse=True)
+    )
     ranking_note = (
-        f"Best learned method on this held-out proxy: {best_learned['id']} "
-        f"(AUROC {best_learned['image_auroc']:.3f}) vs classical baseline "
-        f"{classical['id']} (AUROC {classical['image_auroc']:.3f}). "
+        f"Best method on this held-out proxy: {best_learned['id']} ({best_learned['family']}, "
+        f"AUROC {best_learned['image_auroc']:.3f}) vs classical baseline {classical['id']} "
+        f"(AUROC {classical['image_auroc']:.3f}). Full ranking: {ranking}. "
         + (
-            "Learned beats classical here."
+            "Learned/foundation beats classical here."
             if best_learned["image_auroc"] >= classical["image_auroc"]
             else "Classical baseline beats the learned methods here (reported honestly)."
         )

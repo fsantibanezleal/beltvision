@@ -35,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sel-dims", type=int, default=100)
     p.add_argument("--coreset-size", type=int, default=1024)
     p.add_argument("--work-long-side", type=int, default=512)
+    p.add_argument("--beyond-sota", action="store_true",
+                   help="also evaluate the foundation methods (DINOv2-kNN, OWLv2); needs a GPU + [gpu] extra")
+    p.add_argument("--device", default="cpu", help="device for the beyond-SOTA backbones (e.g. cuda)")
     return p
 
 
@@ -52,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         sel_dims=args.sel_dims,
         coreset_size=args.coreset_size,
         work_long_side=args.work_long_side,
+        beyond_sota=args.beyond_sota,
+        device=args.device,
     )
     print(json.dumps(summary["split"], indent=2))
     print("conv_ae:", summary["conv_ae"]["bytes"], "bytes,",
