@@ -66,9 +66,15 @@ def fig_geometry():
     a1.bar(x, ori, color=cols, edgecolor=INK, linewidth=0.6, width=0.66, zorder=3)
     a1.axhline(8.0, color="#b23a48", linewidth=1.1, linestyle="--", label="product tolerance (8 deg)")
     for xi, v in zip(x, ori):
-        a1.text(xi, v + 0.15, f"{v:.1f}", ha="center", va="bottom", fontsize=7.2)
+        if 7.0 < v < 8.6:
+            # a label above this bar would sit on the tolerance line; print it inside the bar
+            a1.text(xi, v - 0.15, f"{v:.1f}", ha="center", va="top", fontsize=7.2, color="white", zorder=4)
+        else:
+            a1.text(xi, v + 0.15, f"{v:.1f}", ha="center", va="bottom", fontsize=7.2)
     a1.set_ylabel("axis-angle error (deg)")
-    a1.set_xticks(x); a1.set_xticklabels(labels, fontsize=6.9)
+    # one-line labels, rotated so that neighbouring labels do not run into each other
+    flat = [lab.replace("\n", " ") for lab in labels]
+    a1.set_xticks(x); a1.set_xticklabels(flat, fontsize=6.9, rotation=30, ha="right", rotation_mode="anchor")
     a1.set_ylim(0, 9.2)
     a1.set_title(f"(a) orientation recovered across paths\n(mean {d['summary']['ori_err_mean_deg']:.1f} deg; "
                  f"orange = curved)", fontsize=8.4)
@@ -80,11 +86,11 @@ def fig_geometry():
 
     # (b) belt-footprint IoU
     a2.bar(x, iou, color="#3fa34d", edgecolor=INK, linewidth=0.6, width=0.66, zorder=3)
-    a2.axhline(0.5, color="#b23a48", linewidth=1.0, linestyle="--", label="gate floor (0.50)")
+    a2.axhline(0.5, color="#b23a48", linewidth=1.0, linestyle="--", label="recovery floor (0.50)")
     for xi, v in zip(x, iou):
         a2.text(xi, v + 0.012, f"{v:.2f}", ha="center", va="bottom", fontsize=7.2)
     a2.set_ylabel("belt-footprint IoU (belt $\\cup$ content vs GT)")
-    a2.set_xticks(x); a2.set_xticklabels(labels, fontsize=6.9)
+    a2.set_xticks(x); a2.set_xticklabels(flat, fontsize=6.9, rotation=30, ha="right", rotation_mode="anchor")
     a2.set_ylim(0, 1.0)
     a2.set_title(f"(b) belt region recovered\n(mean {d['summary']['belt_iou_mean']:.2f}, "
                  f"min {d['summary']['belt_iou_min']:.2f})", fontsize=8.4)
@@ -126,17 +132,20 @@ def fig_semantic():
     x = np.arange(len(cats))
     cols = ["#7d99b0", "#8a7d55", "#c07a2b", "#b23a48"]
     ax.bar(x, means, color=cols, edgecolor=INK, linewidth=0.6, width=0.6, zorder=3)
-    # per-scene spread as light dots
+    # per-scene spread as light dots, offset to the right half of each bar so that they do not
+    # overprint the centred mean label
     for xi, vals in zip(x, spreads):
         if len(vals) > 1:
-            ax.scatter([xi] * len(vals), vals, s=14, color=INK, alpha=0.45, zorder=4)
-    for xi, m, n in zip(x, means, ns):
+            ax.scatter([xi + 0.2] * len(vals), vals, s=14, color=INK, alpha=0.45, zorder=4)
+    for xi, m in zip(x, means):
         ax.text(xi, m + 0.02, f"{m:.2f}", ha="center", va="bottom", fontsize=8.6, fontweight="bold")
-        ax.text(xi, -0.075, f"n={n}", ha="center", va="top", fontsize=6.8, color="#555")
+    # the annotation sits in the free area above the foreign-object bar, clear of the other bars,
+    # and its arrow stops above the 0.00 label
     ax.annotate("classical core does not\nisolate foreign objects;\nthat is the learned lane",
-                xy=(3, 0.02), xytext=(2.15, 0.42), fontsize=7.0, color="#b23a48",
+                xy=(3, 0.1), xytext=(2.95, 0.45), fontsize=7.0, color="#b23a48",
                 ha="center", arrowprops=dict(arrowstyle="->", color="#b23a48", linewidth=1.0))
-    ax.set_xticks(x); ax.set_xticklabels([c[1] for c in cats], fontsize=8.0)
+    # the per-class sample size is the last line of each category label
+    ax.set_xticks(x); ax.set_xticklabels([f"{c[1]}\nn={n}" for c, n in zip(cats, ns)], fontsize=8.0)
     ax.set_ylabel("per-class IoU vs synthetic ground truth")
     ax.set_ylim(0, 1.0)
     ax.set_title("Semantic recovery by class (classical core, use_learned=False)\n"
