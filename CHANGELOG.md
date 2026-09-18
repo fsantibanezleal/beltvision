@@ -6,6 +6,57 @@ three-segment `X.YY.ZZZ` version scheme with a `vX.YY.ZZZ` git tag per release.
 
 ## [Unreleased]
 
+## [0.11.006] - 2026-07-13
+
+### Added
+
+- **Beyond-SOTA methods wired PERMANENTLY into the benchmark** (`compute_benchmark(foundation=True,
+  device=...)` + `run_precompute(beyond_sota=True)` + `python -m beltvision.precompute --beyond-sota
+  --device cuda`). `_foundation_methods` evaluates **DINOv2-kNN** (AnomalyDINO: L2-normalised DINOv2
+  ViT-B/14 patch features + PatchCore kNN to a normal bank) and **OWLv2** open-vocab foreign-object
+  detection on the same held-out split, appending schema-matched entries + a full ranking note. The
+  foundation methods are GPU-gated (the classical/SOTA benchmark still runs on CPU without them), so the
+  beyond-SOTA result is now reproducible from source, not a one-off script.
+
+## [0.11.005] - 2026-07-13
+
+### Fixed / Added
+
+- **Real-frame robustness for the auto belt band.** On the GT synthetics the sweep works (belt =
+  dominant band), but on a REAL cluttered industrial frame the strongest parallel band can be the
+  horizon / machinery / floor lines, not the belt — the detector could be confidently wrong.
+  Two mitigations: (1) a **centrality prior** in the band score (a band hugging a frame edge, e.g.
+  the horizon, is down-weighted; GT stays 20/20 and the oblique gravel frame now honestly reads
+  low-confidence instead of reporting the horizon); (2) `analyze_scene` now **constrains the
+  robust geometry to the LEARNED belt region** (segmenter mask, dilated) so the sweep/projection
+  cannot escape onto machinery — uniting "where is the belt" (learned) with "precise straight
+  limits + midline centreline" (classical). Falls back to the whole frame when the mask is
+  absent/degenerate. NOTE: real-frame accuracy is bounded by the belt segmenter's quality; the
+  Studio guided-ROI path remains the reliable route on hard real frames.
+
+## [0.11.004] - 2026-07-13
+
+### Fixed
+
+- **Belt orientation was WRONG on empty belts (adversarial GT validation).** Validated the
+  robust `belt_band` against synthetic scenes with EXACT ground truth (orientation/width/
+  centreline) across vertical/horizontal/diagonal/curved/misaligned, loaded and empty — it
+  scored only **8/20**: on empty belts the global-texture orientation (Radon/FFT/structure-
+  tensor consensus) flipped ~90deg because the belt is not the dominant scene texture. Replaced
+  it with `_sweep_orientation`: the belt axis is now found by MAXIMISING the two-parallel-
+  opposite-polarity-edge band signature over a θ sweep (the consensus is only a tie-break prior).
+  Straight belts now recover orientation to **~1deg**; the suite passes **20/20** (orientation
+  10deg / width 30% / centre 15%; the 10deg budget covers only a curved belt and a support beam
+  nearly parallel to the belt). Added an interior-edge penalty (reject a band that encloses the
+  real belt edges, e.g. bracketing support beams).
+
+### Added
+
+- **`tests/test_gt_geometry.py` — a BLOCKING ground-truth gate.** The pipeline must recover known
+  synthetic geometry within tolerance across orientations + loaded/empty, or the build fails
+  (per the wip's synthetic-GT rule). Plus a tight ≤4deg straight-belt check and a damage-responds-
+  to-injected-damage check.
+
 ## [0.11.003] - 2026-07-13
 
 ### Added

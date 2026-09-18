@@ -109,7 +109,22 @@ def analyze_scene(
     # single mask-derived belt_geometry/damage/edges that produced trash on real frames.
     band_rec: dict[str, Any] | None = None
     if any(a in wanted for a in ("belt_geometry", "damage", "edges")):
-        band_rec = robust.belt_band(bgr)
+        # Constrain the robust geometry to the LEARNED belt region (segmenter mask), so on a real
+        # cluttered frame the orientation sweep + projection cannot lock onto machinery / the
+        # horizon / floor lines (which out-score the belt on the whole frame). This unites the
+        # segmenter's "where is the belt" with the classical "precise straight limits + midline
+        # centreline". A dilated footprint keeps the belt↔background edge inside the ROI. When the
+        # mask is absent/degenerate (covers ~everything) we fall back to the whole frame.
+        band_roi = None
+        footprint = belt_mask | layers.content_mask
+        frac = float(footprint.mean())
+        if footprint.any() and 0.02 < frac < 0.85:
+            import cv2
+
+            band_roi = cv2.dilate(
+                footprint.astype(np.uint8),
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))) > 0
+        band_rec = robust.belt_band(bgr, roi_mask=band_roi)
 
     out: dict[str, Any] = {}
     for aid in wanted:
