@@ -69,7 +69,7 @@ dl = [
 ]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.5",
+    "ruff==0.15.18",
 ]
 # GPU TRAINING / PRECOMPUTE level (NOT the CPU VPS runtime): all the heavy models + the
 # offline catalogue precompute, run locally with device='cuda'. This extra is the SINGLE
