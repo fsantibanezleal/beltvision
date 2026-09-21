@@ -44,7 +44,7 @@ def _perp_dist(point: np.ndarray, line) -> float:
     b = np.asarray(line["p1"] if isinstance(line, dict) else line[1], float)
     ab = b - a
     n = float(np.hypot(*ab))
-    return float(np.hypot(*(point - a))) if n < 1e-6 else float(abs(np.cross(ab, point - a)) / n)
+    return float(np.hypot(*(point - a))) if n < 1e-6 else float(abs(ab[0] * (point - a)[1] - ab[1] * (point - a)[0]) / n)
 
 
 @pytest.mark.parametrize("name", list(CASES))
